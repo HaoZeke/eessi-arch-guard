@@ -805,6 +805,27 @@ class IntegrationTests(unittest.TestCase):
                 except OSError:
                     pass
 
+    def test_intel_a100_uses_the_directory_that_exists(self):
+        # open-001: do not bake in either Intel subdirectory. The first
+        # candidate with a software directory wins, including when the
+        # listed-first tree is absent and the GPU is an A100 (cc 8.0).
+        icelake = "x86_64/intel/icelake"
+        skylake = "x86_64/intel/skylake_avx512"
+        source = harness.GUARD.read_text(encoding="utf-8")
+        self.assertNotIn(icelake, source)
+        self.assertNotIn(skylake, source)
+        self.site.add_cpu(skylake)
+        self.site.add_module(skylake, "R/4.4.2")
+        self.site.write_cpuinfo(matches="%s:%s" % (icelake, skylake))
+        env = harness.base_env(self.site, icelake, ["R/4.4.2"], gpu="1", gpu_cc="8.0")
+        proc = harness.run_guard(env)
+        changes, _printed = _assert_prolog(proc)
+        self.assertEqual(changes["EESSI_SOFTWARE_SUBDIR"], skylake)
+        self.assertEqual(changes["EESSI_ACCEL_SUBDIR"], "accel/nvidia/cc80")
+        self.assertIn(icelake, changes["EESSI_ARCH_GUARD_RELOADED"])
+        self.assertIn(skylake, changes["EESSI_ARCH_GUARD_RELOADED"])
+        self.assertIn("accel/nvidia/cc80", changes["EESSI_ARCH_GUARD_RELOADED"])
+
     def test_help_version_and_shebang(self):
         first = harness.GUARD.read_text(encoding="utf-8").splitlines()[0]
         self.assertEqual(first, "#!/usr/bin/python3 -I")

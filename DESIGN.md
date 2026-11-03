@@ -103,6 +103,10 @@ These were rejected before this repo existed. The new information does not reviv
 
 Runtime dependency is Python 3.9+ standard library, executed as `python3 -I`. The TaskProlog target is the single file `src/eessi_arch_guard.py` (shebang `#!/usr/bin/python3 -I`). `pyproject.toml` packages that module for a login-node `--shell` install. The generated console script does not pass `-I`; the prolog should be the file itself.
 
+## open-001 - Intel A100 CPU subdirectory
+
+Resolved, without naming a directory in the program. The question was which CPU subdirectory an Intel node with A100 GPUs gets. Two names were in play, `x86_64/intel/icelake` and `x86_64/intel/skylake_avx512`, and either one baked into the guard would be wrong on the other node and on every AMD node. The guard does not contain either name. CPU selection stays the first `eessi_archdetect.sh -a cpupath` candidate for which `<EESSI_PREFIX>/software/<EESSI_OS_TYPE>/<candidate>/software` is a directory. The accelerator subdirectory stays the string `eessi_archdetect.sh accelpath` prints. An A100 is compute capability 8.0 only when that script prints `accel/nvidia/cc80`. A site that has one of those CPU trees and not the other follows the tree it mounted.
+
 ## Out of scope
 
 open-003 is unanswered: whether this site already has a TaskProlog, which Slurm version it runs, the cost on a 192-task node with node-local `TMPDIR`, and a real cross-target job on production nodes. This repository does not invent those measurements. Binaries built with `-march=native` on a login node, virtualenvs with compiled wheels, and a module that simply does not exist for the target are unchanged: the guard refuses rather than loading half of a stack.
