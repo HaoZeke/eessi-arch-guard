@@ -948,6 +948,13 @@ def _read_cache(directory: str, name: str, shell: bool) -> Optional[Outcome]:
     return Outcome(dict(data["changes"]), message, kind, detail)
 
 
+def _discard_file(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 def _write_cache(path: str, outcome: Outcome) -> None:
     directory, name = os.path.split(path)
     payload = {
@@ -972,23 +979,19 @@ def _write_cache(path: str, outcome: Outcome) -> None:
             )
             os.write(fd, data)
             os.fchmod(fd, 0o600)
+            os.close(fd)
+            fd = -1
+            os.replace(tmp_path, path)
         except OSError:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            _discard_file(tmp_path)
             return
+        except BaseException:
+            _discard_file(tmp_path)
+            raise
     finally:
         if fd >= 0:
             os.close(fd)
         os.close(dirfd)
-    try:
-        os.replace(tmp_path, path)
-    except OSError:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
 
 
 def cached_decide(

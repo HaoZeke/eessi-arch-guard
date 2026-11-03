@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -415,6 +416,34 @@ class UnitTests:
         assert raised
         shell = guard.render_bytes({"PATH": "short"}, None, shell=True, announce=False)
         assert b"PATH" in shell
+
+    def test_interrupted_cache_write_leaves_no_temporary_file(self):
+        directory = tempfile.mkdtemp(prefix="eessi-arch-guard-cache-")
+        try:
+            env = _env(TMPDIR=directory, SLURM_JOB_ID="77", SLURM_STEP_ID="batch")
+            path = guard.cache_file_path(env)
+            outcome = guard.Outcome({"PATH": "/bin"}, "moved", "reloaded")
+            original = os.write
+
+            def boom(fd, data):
+                if isinstance(data, (bytes, bytearray)) and data.startswith(b'{"v":'):
+                    raise KeyboardInterrupt()
+                return original(fd, data)
+
+            os.write = boom
+            raised = False
+            try:
+                guard._write_cache(path, outcome)
+            except KeyboardInterrupt:
+                raised = True
+            finally:
+                os.write = original
+            assert raised
+            leftover = [name for name in os.listdir(directory) if ".tmp" in name]
+            assert leftover == [], leftover
+            assert not os.path.exists(path)
+        finally:
+            shutil.rmtree(directory)
 
     def test_wire_round_trip_keeps_the_byte(self):
         text = "caf\udce9/bin"
