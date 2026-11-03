@@ -449,6 +449,47 @@ class IntegrationTests(unittest.TestCase):
         finally:
             conf.unlink(missing_ok=True)
 
+    def test_non_utf8_path_entry_keeps_its_bytes(self):
+        env = self._cpu_env(ZEN4, "zen2")
+        env["LC_ALL"] = "en_US.UTF-8"
+        env["LANG"] = "en_US.UTF-8"
+        raw = "/opt/caf\udce9/bin"
+        env["PATH"] = raw + ":" + env["PATH"]
+        env["EESSI_TEST_BASE_PATH"] = raw + ":" + env["EESSI_TEST_BASE_PATH"]
+        proc = subprocess.run(
+            [sys.executable, "-I", str(harness.GUARD)],
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn(b"UnicodeEncodeError", proc.stdout)
+        self.assertNotIn(b"skipped", proc.stdout)
+        self.assertNotIn(b"\xed\xb0\xa9", proc.stdout)
+        self.assertIn(b"/opt/caf\xe9/bin", proc.stdout)
+        self.assertIn(("EESSI_SOFTWARE_SUBDIR=%s" % ZEN2).encode("ascii"), proc.stdout)
+        for args in ([], ["--shell"]):
+            with open("/dev/full", "wb") as sink:
+                blocked = subprocess.run(
+                    [sys.executable, "-I", str(harness.GUARD), *args],
+                    stdout=sink,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    check=False,
+                )
+            self.assertEqual(blocked.returncode, 0, (args, blocked.returncode, blocked.stderr))
+            read_fd, write_fd = os.pipe()
+            os.close(read_fd)
+            blocked = subprocess.run(
+                [sys.executable, "-I", str(harness.GUARD), *args],
+                stdout=write_fd,
+                stderr=subprocess.PIPE,
+                env=env,
+                check=False,
+            )
+            os.close(write_fd)
+            self.assertEqual(blocked.returncode, 0, (args, blocked.returncode, blocked.stderr))
+
     def test_help_version_and_shebang(self):
         first = harness.GUARD.read_text(encoding="utf-8").splitlines()[0]
         self.assertEqual(first, "#!/usr/bin/python3 -I")

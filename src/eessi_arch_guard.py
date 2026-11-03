@@ -13,6 +13,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import locale
 import os
 import re
 import secrets
@@ -98,6 +99,12 @@ _SAFE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 DIAGNOSE_LIMIT = 32
 MAX_MODULE_NAME = 256
 MAX_ARCH_STDOUT = 65536
+# Slurm 17.11 src/slurmd/slurmstepd/task.c `_run_script_and_set_env` reads a
+# TaskProlog line with fgets(buf, sizeof(buf) - 1) and `char buf[4096]`.
+# fgets stores at most size-1 bytes and size is sizeof(buf)-1, so the line
+# is 4094 bytes. Current master does not cap the line. Stay inside the
+# 17.11 read so one export cannot continue as a second directive.
+PROLOG_LINE_MAX = 4094
 
 APPLY_SH = """\
 source "$1" >/dev/null || exit 4
@@ -244,6 +251,83 @@ def environment_delta(
     if unsafe:
         return None
     return changes
+
+
+def _fit_encoded(raw: bytes, room: int, encoding: str) -> bytes:
+    """Keep a prefix that is valid text and at most `room` bytes."""
+    if len(raw) <= room:
+        return raw
+    cut = raw[:room]
+    while cut:
+        try:
+            cut.decode(encoding)
+            return cut
+        except UnicodeDecodeError:
+            cut = cut[:-1]
+    return b""
+
+
+def message_bytes(text: str) -> bytes:
+    """One locale-encoded message, inside the prolog line buffer."""
+    cleaned = one_line(text)
+    encoding = locale.getpreferredencoding(False) or "ascii"
+    try:
+        raw = cleaned.encode(encoding, errors="replace")
+    except LookupError:
+        encoding = "ascii"
+        raw = cleaned.encode(encoding, errors="replace")
+    room = PROLOG_LINE_MAX - len(b"print ") - 1
+    return _fit_encoded(raw, room, encoding)
+
+
+def write_fd(fd: int, data: bytes) -> None:
+    """Write bytes to a descriptor. A failed write is dropped."""
+    if not data:
+        return
+    view = memoryview(data)
+    while len(view):
+        try:
+            written = os.write(fd, view)
+        except OSError:
+            return
+        if written <= 0:
+            return
+        view = view[written:]
+
+
+def render_bytes(
+    changes: Mapping[str, Optional[str]],
+    message: Optional[str],
+    shell: bool,
+    announce: bool,
+) -> bytes:
+    """Prolog or shell bytes. Export values keep the bytes they stand for."""
+    chunks = []
+    for key in sorted(changes):
+        if ENV_NAME_RE.fullmatch(key) is None:
+            raise ValueError("refusing to emit an unsafe name")
+        value = changes[key]
+        if value is None:
+            chunks.append(b"unset " + key.encode("ascii") + b"\n")
+            continue
+        if not isinstance(value, str):
+            raise ValueError("refusing to emit a non-text value")
+        if shell:
+            line = "export %s=%s" % (key, shlex.quote(value))
+            chunks.append(os.fsencode(line) + b"\n")
+        else:
+            if not value_emit_ok(value, multiline=False):
+                raise ValueError("refusing to emit an unsafe prolog value")
+            line = b"export " + key.encode("ascii") + b"=" + os.fsencode(value) + b"\n"
+            if len(line) > PROLOG_LINE_MAX:
+                raise ValueError("refusing to emit a prolog line past the Slurm 17.11 read")
+            chunks.append(line)
+    if message and announce and not shell:
+        line = b"print " + message_bytes(message) + b"\n"
+        if len(line) > PROLOG_LINE_MAX:
+            raise ValueError("refusing to emit a prolog line past the Slurm 17.11 read")
+        chunks.append(line)
+    return b"".join(chunks)
 
 
 def render(
@@ -737,6 +821,16 @@ def decide(
         now_label,
         was_label,
     )
+    if not shell:
+        try:
+            render_bytes(delta, message, False, True)
+        except ValueError:
+            return _failed(
+                was_label,
+                "unsafe-environment",
+                "eessi-arch-guard: reload produced a prolog line past the "
+                "Slurm 17.11 read; environment left as it was",
+            )
     return Outcome(delta, message, "reloaded", None)
 
 
@@ -1019,23 +1113,22 @@ def _announce(env: Mapping[str, str], shell: bool) -> bool:
     return env.get("SLURM_LOCALID", "0") == "0"
 
 
-def _write_stdout(chain_out: bytes, text: str) -> None:
+def _write_stdout(chain_out: bytes, text: bytes) -> None:
     if chain_out:
-        sys.stdout.buffer.write(chain_out)
+        write_fd(1, chain_out)
         if not chain_out.endswith(b"\n"):
-            sys.stdout.buffer.write(b"\n")
-    sys.stdout.write(text)
-    sys.stdout.flush()
+            write_fd(1, b"\n")
+    write_fd(1, text)
 
 
 def _emergency(exc: BaseException, shell: bool) -> None:
     message = "eessi-arch-guard: skipped, %s: %s" % (type(exc).__name__, exc)
     try:
+        encoded = message_bytes(message) + b"\n"
         if shell:
-            sys.stderr.write(one_line(message) + "\n")
+            write_fd(2, encoded)
         else:
-            sys.stdout.write("print " + one_line(message) + "\n")
-            sys.stdout.flush()
+            write_fd(1, b"print " + encoded)
     except Exception:
         return
 
@@ -1045,10 +1138,10 @@ def _main(argv: Sequence[str]) -> int:
     if args.restore:
         return restore_main()
     if args.help:
-        sys.stdout.write(HELP)
+        write_fd(1, HELP.encode("ascii"))
         return 0
     if args.version:
-        sys.stdout.write(__version__ + "\n")
+        write_fd(1, (__version__ + "\n").encode("ascii"))
         return 0
 
     env = dict(os.environ)
@@ -1062,27 +1155,29 @@ def _main(argv: Sequence[str]) -> int:
             warning = "eessi-arch-guard: --chain is not an absolute executable"
             chain = None
         if warning:
-            sys.stderr.write(one_line(warning) + "\n")
+            write_fd(2, message_bytes(warning) + b"\n")
         if chain:
             code, chain_out, err = run_chain(chain, env)
             if err:
-                sys.stderr.buffer.write(err)
+                write_fd(2, err)
             if code != 0:
-                _write_stdout(chain_out, "")
+                _write_stdout(chain_out, b"")
                 return code
 
     try:
         outcome = cached_decide(env, shell=args.shell)
-        text = render(outcome.changes, outcome.message, args.shell, _announce(env, args.shell))
+        text = render_bytes(
+            outcome.changes, outcome.message, args.shell, _announce(env, args.shell)
+        )
     except Exception as exc:
-        _write_stdout(chain_out, "")
+        _write_stdout(chain_out, b"")
         _emergency(exc, args.shell)
         return 0
 
     if args.shell and outcome.message:
-        sys.stderr.write(one_line(outcome.message) + "\n")
+        write_fd(2, message_bytes(outcome.message) + b"\n")
     if env.get("EESSI_ARCH_GUARD_VERBOSE") == "1" and outcome.detail:
-        sys.stderr.write(one_line(outcome.detail) + "\n")
+        write_fd(2, message_bytes(outcome.detail) + b"\n")
     _write_stdout(chain_out, text)
     return 0
 
@@ -1092,7 +1187,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         argv = sys.argv[1:]
     try:
         return _main(argv)
-    except Exception as exc:
+    except (Exception, KeyboardInterrupt) as exc:
         _emergency(exc, "--shell" in argv)
         return 0
 

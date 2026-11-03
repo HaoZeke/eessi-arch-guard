@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import io
 import os
 import re
 import subprocess
 import sys
 import tempfile
-from contextlib import redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -340,13 +338,31 @@ class UnitTests:
 
         guard.cached_decide = boom
         try:
-            out = io.StringIO()
-            with redirect_stdout(out):
-                code = guard.main([])
+            code, out = _capture_fd1(lambda: guard.main([]))
         finally:
             guard.cached_decide = original
         assert code == 0
-        assert out.getvalue().startswith("print eessi-arch-guard: skipped")
+        assert out.startswith(b"print eessi-arch-guard: skipped")
+
+    def test_interrupt_exits_zero(self):
+        original = guard.cached_decide
+
+        def boom(_env, shell):
+            raise KeyboardInterrupt()
+
+        guard.cached_decide = boom
+        try:
+            code, out = _capture_fd1(lambda: guard.main([]))
+        finally:
+            guard.cached_decide = original
+        assert code == 0
+        assert b"KeyboardInterrupt" in out
+        assert out.startswith(b"print eessi-arch-guard: skipped")
+
+    def test_unwritable_stdout_still_exits_zero(self):
+        script = str(Path(__file__).resolve().parents[1] / "src" / "eessi_arch_guard.py")
+        for args in (["--version"], ["--help"]):
+            _assert_writes_exit_zero(script, args)
 
     def test_chain_config_parser_and_untrusted_file(self):
         assert guard.parse_chain_config("# comment\nchain = /bin/true\n") == "/bin/true"
@@ -360,6 +376,45 @@ class UnitTests:
             assert "not owned by root" in reason
         finally:
             os.unlink(handle.name)
+
+    def test_message_trim_keeps_a_character_boundary(self):
+        import locale
+
+        assert guard.PROLOG_LINE_MAX == 4094
+        accent = "\u00e9"
+        naive = (accent * 10).encode("utf-8")[:5]
+        try:
+            naive.decode("utf-8")
+            split = False
+        except UnicodeDecodeError:
+            split = True
+        assert split
+        fitted = guard._fit_encoded((accent * 10).encode("utf-8"), 5, "utf-8")
+        fitted.decode("utf-8")
+        assert len(fitted) <= 5
+        locale.setlocale(locale.LC_ALL, "C.UTF-8")
+        original = guard.PROLOG_LINE_MAX
+        try:
+            guard.PROLOG_LINE_MAX = 20
+            raw = guard.message_bytes(accent * 40)
+            raw.decode("utf-8")
+            room = guard.PROLOG_LINE_MAX - len(b"print ") - 1
+            assert len(raw) <= room
+            assert raw.endswith(accent.encode("utf-8"))
+        finally:
+            guard.PROLOG_LINE_MAX = original
+            locale.setlocale(locale.LC_ALL, "C")
+
+    def test_export_line_over_the_slurm_17_11_cap_is_refused(self):
+        value = "a" * (guard.PROLOG_LINE_MAX + 8)
+        raised = False
+        try:
+            guard.render_bytes({"PATH": value}, None, shell=False, announce=False)
+        except ValueError:
+            raised = True
+        assert raised
+        shell = guard.render_bytes({"PATH": "short"}, None, shell=True, announce=False)
+        assert b"PATH" in shell
 
     def test_fake_lmod_writes_environment_bytes(self):
         fake = Path(__file__).resolve().parent / "fake_lmod.py"
@@ -406,6 +461,55 @@ class UnitTests:
             import shutil
 
             shutil.rmtree(root)
+
+
+def _assert_writes_exit_zero(script, args, env=None):
+    if env is None:
+        env = {"PATH": "/usr/bin:/bin", "HOME": "/tmp", "LC_ALL": "C"}
+    with open("/dev/full", "wb") as sink:
+        proc = subprocess.run(
+            [sys.executable, "-I", script, *args],
+            stdout=sink,
+            stderr=subprocess.PIPE,
+            env=env,
+            check=False,
+        )
+    assert proc.returncode == 0, (args, proc.returncode, proc.stderr)
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)
+    proc = subprocess.run(
+        [sys.executable, "-I", script, *args],
+        stdout=write_fd,
+        stderr=subprocess.PIPE,
+        env=env,
+        check=False,
+    )
+    os.close(write_fd)
+    assert proc.returncode == 0, (args, proc.returncode, proc.stderr)
+
+
+def _capture_fd1(fn):
+    read_fd, write_fd = os.pipe()
+    saved = os.dup(1)
+    os.dup2(write_fd, 1)
+    os.close(write_fd)
+    try:
+        result = fn()
+    finally:
+        os.dup2(saved, 1)
+        os.close(saved)
+    os.set_blocking(read_fd, False)
+    chunks = []
+    while True:
+        try:
+            block = os.read(read_fd, 65536)
+        except BlockingIOError:
+            break
+        if not block:
+            break
+        chunks.append(block)
+    os.close(read_fd)
+    return result, b"".join(chunks)
 
 
 def load_tests(_loader, _tests, _pattern):
