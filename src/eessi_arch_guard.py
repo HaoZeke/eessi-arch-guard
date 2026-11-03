@@ -559,6 +559,20 @@ def _diagnose(
     return missing
 
 
+def to_wire(value: str) -> str:
+    """One character per byte this process would pass to an exec."""
+    return os.fsencode(value).decode("latin-1")
+
+
+def from_wire(value: str) -> str:
+    """Inverse of to_wire in this process."""
+    return os.fsdecode(value.encode("latin-1"))
+
+
+def _wire_map(mapping: Mapping[str, str]) -> Dict[str, str]:
+    return {to_wire(str(key)): to_wire(str(value)) for key, value in mapping.items()}
+
+
 def do_restore(payload: Mapping[str, object]) -> Dict[str, object]:
     env = payload.get("env")
     eessi = payload.get("eessi")
@@ -566,13 +580,23 @@ def do_restore(payload: Mapping[str, object]) -> Dict[str, object]:
     lmod_cmd = payload.get("lmod")
     if not isinstance(env, dict) or not isinstance(eessi, str) or not isinstance(modules, list):
         return {"ok": False, "missing": [], "error": "restore request is malformed"}
-    if not isinstance(lmod_cmd, str) or not lmod_invocable(lmod_cmd):
+    if not isinstance(lmod_cmd, str):
+        return {"ok": False, "missing": [], "error": "restore request is malformed"}
+    try:
+        eessi = from_wire(eessi)
+        lmod_cmd = from_wire(lmod_cmd)
+        modules = [from_wire(name) if isinstance(name, str) else name for name in modules]
+        module_env = {
+            from_wire(str(key)): from_wire(str(value)) for key, value in env.items()
+        }
+    except UnicodeError:
+        return {"ok": False, "missing": [], "error": "restore request is malformed"}
+    if not lmod_invocable(lmod_cmd):
         return {"ok": False, "missing": [], "error": "LMOD_CMD is not executable"}
     if not module_name_ok(eessi) or EESSI_MODULE_RE.fullmatch(eessi) is None:
         return {"ok": False, "missing": [], "error": "unsafe-module-name"}
     if any(not isinstance(name, str) or not module_name_ok(name) for name in modules):
         return {"ok": False, "missing": [], "error": "unsafe-module-name"}
-    module_env = {str(key): str(value) for key, value in env.items()}
     current, err = apply_lmod(module_env, lmod_cmd, ["--force", "purge"])
     if current is None:
         return {"ok": False, "missing": [], "error": one_line(err or "purge failed", 300)}
@@ -593,7 +617,7 @@ def do_restore(payload: Mapping[str, object]) -> Dict[str, object]:
                 "error": one_line(err or "module load failed", 300),
             }
         current = nxt
-    return {"ok": True, "env": current, "missing": [], "error": ""}
+    return {"ok": True, "env": _wire_map(current), "missing": [], "error": ""}
 
 
 def restore_main() -> int:
@@ -611,10 +635,10 @@ def call_restore(
 ) -> RestoreResult:
     payload = {
         "v": 1,
-        "env": dict(env),
-        "eessi": eessi,
-        "modules": list(modules),
-        "lmod": env.get("LMOD_CMD", ""),
+        "env": _wire_map(env),
+        "eessi": to_wire(eessi),
+        "modules": [to_wire(name) for name in modules],
+        "lmod": to_wire(env.get("LMOD_CMD", "")),
     }
     clean = {
         "PATH": "/usr/bin:/bin",
@@ -625,7 +649,7 @@ def call_restore(
     }
     try:
         proc = subprocess.run(
-            [sys.executable, "-I", os.path.abspath(__file__), "--restore"],
+            [sys.executable, "-I", "-X", "utf8", os.path.abspath(__file__), "--restore"],
             input=json.dumps(payload).encode("utf-8"),
             capture_output=True,
             env=clean,
@@ -647,7 +671,10 @@ def call_restore(
     restored = data.get("env")
     if not isinstance(restored, dict):
         return RestoreResult(False, None, missing, "restore helper returned no environment")
-    cleaned = {str(key): str(value) for key, value in restored.items()}
+    try:
+        cleaned = {from_wire(str(key)): from_wire(str(value)) for key, value in restored.items()}
+    except UnicodeError:
+        return RestoreResult(False, None, missing, "restore helper returned no environment")
     return RestoreResult(True, cleaned, missing, "")
 
 

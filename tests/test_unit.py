@@ -416,6 +416,11 @@ class UnitTests:
         shell = guard.render_bytes({"PATH": "short"}, None, shell=True, announce=False)
         assert b"PATH" in shell
 
+    def test_wire_round_trip_keeps_the_byte(self):
+        text = "caf\udce9/bin"
+        assert guard.from_wire(guard.to_wire(text)) == text
+        assert os.fsencode(guard.from_wire(guard.to_wire(text))) == b"caf\xe9/bin"
+
     def test_fake_lmod_writes_environment_bytes(self):
         fake = Path(__file__).resolve().parent / "fake_lmod.py"
         env = dict(os.environ)

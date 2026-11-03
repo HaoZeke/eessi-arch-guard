@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -448,6 +449,44 @@ class IntegrationTests(unittest.TestCase):
             self.assertIn("EESSI_ARCH_GUARD_RELOADED", proc.stdout)
         finally:
             conf.unlink(missing_ok=True)
+
+    def test_latin1_locale_keeps_bytes_through_the_restore(self):
+        parent = os.path.join(tempfile.gettempdir(), "caf\udce9-eessi-arch-guard")
+        os.makedirs(parent, exist_ok=True)
+        locale_dir = os.path.join(parent, "locale")
+        os.makedirs(locale_dir, exist_ok=True)
+        subprocess.run(
+            [
+                "localedef",
+                "-f",
+                "ISO-8859-1",
+                "-i",
+                "en_US",
+                os.path.join(locale_dir, "en_US.ISO-8859-1"),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        self.site.close()
+        self.site = harness.Site(directory=parent)
+        for cpu in (ZEN2, ZEN4):
+            self.site.add_cpu(cpu)
+            self.site.add_module(cpu, "R/4.4.2")
+        env = self._cpu_env(ZEN4, "zen2")
+        env["LOCPATH"] = locale_dir
+        env["LC_ALL"] = "en_US.ISO-8859-1"
+        env["LANG"] = "en_US.ISO-8859-1"
+        proc = subprocess.run(
+            [sys.executable, "-I", str(harness.GUARD)],
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn(b"module load failed", proc.stdout)
+        self.assertNotIn(b"skipped", proc.stdout)
+        self.assertIn(b"caf\xe9", proc.stdout)
+        self.assertIn(("EESSI_SOFTWARE_SUBDIR=%s" % ZEN2).encode("ascii"), proc.stdout)
 
     def test_non_utf8_path_entry_keeps_its_bytes(self):
         env = self._cpu_env(ZEN4, "zen2")

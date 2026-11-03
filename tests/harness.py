@@ -23,8 +23,12 @@ CPU_MATCHES = {
 
 
 class Site:
-    def __init__(self) -> None:
-        self.root = tempfile.mkdtemp(prefix="eessi-arch-guard-")
+    def __init__(self, directory: str = "") -> None:
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+            self.root = tempfile.mkdtemp(prefix="eessi-arch-guard-", dir=directory)
+        else:
+            self.root = tempfile.mkdtemp(prefix="eessi-arch-guard-")
         self.prefix = os.path.join(self.root, "prefix")
         self.init = os.path.join(self.prefix, "init")
         self.bindir = os.path.join(self.root, "bin")
