@@ -438,6 +438,28 @@ class IntegrationTests(unittest.TestCase):
         self.assertNotIn("EESSI_ARCH_GUARD_RELOADED", proc.stdout)
         self.assertEqual(harness.log_lines(self.site.log), [])
 
+    def test_bad_config_byte_keeps_the_other_keys(self):
+        conf = Path(harness.GUARD).with_name("eessi-arch-guard.conf")
+        ok_path = os.path.join(self.site.root, "chain-ok.sh")
+        with open(ok_path, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\necho 'export FROM_CHAIN=yes'\n")
+        os.chmod(ok_path, 0o755)
+        conf.write_bytes(
+            ("chain = %s\n" % ok_path).encode("ascii") + b"# caf\xe9\ntimeout = 1\xff\n"
+        )
+        subprocess.check_call(["sudo", "chown", "root:root", str(conf)])
+        subprocess.check_call(["sudo", "chmod", "644", str(conf)])
+        try:
+            env = self._cpu_env(ZEN4, "zen2")
+            proc = harness.run_guard(env)
+            changes, _printed = _assert_prolog(proc)
+            self.assertEqual(changes["FROM_CHAIN"], "yes")
+            self.assertEqual(changes["EESSI_SOFTWARE_SUBDIR"], ZEN2)
+            self.assertIn("original bytes", proc.stderr)
+            self.assertIn("timeout", proc.stderr)
+        finally:
+            subprocess.check_call(["sudo", "rm", "-f", str(conf)])
+
     def test_untrusted_config_is_ignored(self):
         conf = Path(harness.GUARD).with_name("eessi-arch-guard.conf")
         conf.write_text("chain = /bin/true\n", encoding="utf-8")

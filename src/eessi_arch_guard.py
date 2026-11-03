@@ -1051,16 +1051,34 @@ def _config_untrusted(path: str) -> Optional[str]:
 
 
 def parse_config(text: str) -> Dict[str, str]:
-    settings: Dict[str, str] = {}
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if key:
-            settings[key] = value.strip()
+    settings, _bad = parse_config_bytes(text.encode("utf-8"))
     return settings
+
+
+def parse_config_bytes(blob: bytes) -> Tuple[Dict[str, str], Tuple[str, ...]]:
+    """Settings from raw config bytes. A bad value does not drop other keys."""
+    settings: Dict[str, str] = {}
+    bad: List[str] = []
+    for raw in blob.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(b"#") or b"=" not in line:
+            continue
+        key_b, value_b = line.split(b"=", 1)
+        key_b = key_b.strip()
+        value_b = value_b.strip()
+        try:
+            key = key_b.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if not key:
+            continue
+        try:
+            value = value_b.decode("utf-8")
+        except UnicodeDecodeError:
+            value = value_b.decode("utf-8", "surrogateescape")
+            bad.append(key)
+        settings[key] = value
+    return settings, tuple(bad)
 
 
 def parse_chain_config(text: str) -> Optional[str]:
@@ -1089,28 +1107,36 @@ def site_config(script_path: str) -> Tuple[Optional[Dict[str, str]], Optional[st
         if reason:
             return None, "eessi-arch-guard: config ignored: " + reason
         try:
-            with open(path, "r", encoding="utf-8") as handle:
-                text = handle.read()
+            with open(path, "rb") as handle:
+                blob = handle.read()
         except OSError as exc:
             return None, "eessi-arch-guard: config ignored: %s" % exc
-        return parse_config(text), None
+        settings, bad = parse_config_bytes(blob)
+        if bad:
+            shown = " ".join(bad)
+            return settings, (
+                "eessi-arch-guard: config value kept with its original bytes: %s" % shown
+            )
+        return settings, None
     return None, None
 
 
 def configured_chain(script_path: str) -> Tuple[Optional[str], Optional[str]]:
     """Return (chain, warning). A user-owned config is not a chain source."""
     settings, warning = site_config(script_path)
-    if warning:
+    if settings is None:
         return None, warning
     chain = config_chain(settings)
     if chain and _chain_path_ok(chain):
-        return chain, None
+        return chain, warning
     if chain:
-        return None, (
-            "eessi-arch-guard: config chain is not an absolute executable: %s"
-            % one_line(chain, 200)
+        text = "eessi-arch-guard: config chain is not an absolute executable: %s" % one_line(
+            chain, 200
         )
-    return None, None
+        if warning:
+            text = warning + " " + text
+        return None, text
+    return None, warning
 
 
 def run_chain(path: str, env: Mapping[str, str]) -> Tuple[int, bytes, bytes]:

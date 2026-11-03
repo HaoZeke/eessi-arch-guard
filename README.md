@@ -51,7 +51,7 @@ fi
 exit $?
 ```
 
-Or leave `TaskProlog` on this file and add a root-owned config. `/etc/eessi-arch-guard.conf` is read first; a file named `eessi-arch-guard.conf` beside the program is read only if `/etc` has none. The file must be a regular file, owned by root, and not writable by group or others. Symlinks are ignored. A file that exists but fails those checks is not used, and a one-line warning goes to stderr.
+Or leave `TaskProlog` on this file and add a root-owned config. `/etc/eessi-arch-guard.conf` is read first; a file named `eessi-arch-guard.conf` beside the program is read only if `/etc` has none. The file must be a regular file, owned by root, and not writable by group or others. Symlinks are ignored. A file that exists but fails those checks is not used, and a one-line warning goes to stderr. Each setting is decoded on its own. A value that is not UTF-8 is kept with surrogateescape, and the other keys still apply. A byte in a comment leaves `chain` and `timeout` in force.
 
 ```
 # /etc/eessi-arch-guard.conf

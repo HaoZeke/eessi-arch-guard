@@ -370,6 +370,11 @@ class UnitTests:
         assert guard.parse_config(text) == {"chain": "/bin/true", "timeout": "60"}
         assert guard.config_chain(guard.parse_config(text)) == "/bin/true"
         assert guard.parse_chain_config(text) == "/bin/true"
+        blob = b"chain = /bin/true\n# caf\xe9\ntimeout = 1\xff\n"
+        settings, bad = guard.parse_config_bytes(blob)
+        assert settings["chain"] == "/bin/true"
+        assert "timeout" in bad
+        assert settings["timeout"].encode("utf-8", "surrogateescape") == b"1\xff"
         assert guard.parse_chain_config("other = 1\n") is None
         assert guard.config_chain(None) is None
         assert guard.config_chain({}) is None
