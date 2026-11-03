@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -359,6 +360,20 @@ class UnitTests:
             assert "not owned by root" in reason
         finally:
             os.unlink(handle.name)
+
+    def test_fake_lmod_writes_environment_bytes(self):
+        fake = Path(__file__).resolve().parent / "fake_lmod.py"
+        env = dict(os.environ)
+        env["PATH"] = "/usr/bin:/bin"
+        env["EESSI_TEST_BASE_PATH"] = "/opt/caf\udce9/bin"
+        proc = subprocess.run(
+            [sys.executable, "-I", str(fake), "bash", "--force", "purge"],
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert b"export PATH='/opt/caf\xe9/bin'" in proc.stdout
 
     def test_readme_lists_every_flag_and_env_name(self):
         root = Path(__file__).resolve().parents[1]

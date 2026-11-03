@@ -24,7 +24,9 @@ def log(line: str) -> None:
 
 
 def emit(line: str) -> None:
-    sys.stdout.write(line + "\n")
+    # Lmod writes the script as bytes. A text stdout raises UnicodeEncodeError
+    # when a locale cannot encode an environment byte.
+    os.write(1, os.fsencode(line) + b"\n")
 
 
 def fail(stderr: str, code: int = 1) -> int:
