@@ -5,9 +5,12 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -334,7 +337,7 @@ class UnitTests:
     def test_main_exception_exits_zero(self):
         original = guard.cached_decide
 
-        def boom(_env, shell):
+        def boom(*_args, **_extra):
             return guard.Outcome({"NOT A NAME": "x"}, "hi", "reloaded")
 
         guard.cached_decide = boom
@@ -348,7 +351,7 @@ class UnitTests:
     def test_interrupt_exits_zero(self):
         original = guard.cached_decide
 
-        def boom(_env, shell):
+        def boom(*_args, **_extra):
             raise KeyboardInterrupt()
 
         guard.cached_decide = boom
@@ -473,6 +476,83 @@ class UnitTests:
         )
         assert proc.returncode == 0, proc.stderr
         assert b"export PATH='/opt/caf\xe9/bin'" in proc.stdout
+
+    def test_timeout_values(self):
+        assert guard.DEFAULT_TIMEOUT == 60
+        assert guard.TIMEOUT_MAX == threading.TIMEOUT_MAX
+        assert guard.parse_timeout("60") == 60.0
+        assert guard.parse_timeout("1.5") == 1.5
+        assert guard.parse_timeout("0") is None
+        assert guard.parse_timeout("-1") is None
+        assert guard.parse_timeout("nope") is None
+        assert guard.parse_timeout(str(guard.TIMEOUT_MAX)) == guard.TIMEOUT_MAX
+        assert guard.parse_timeout(str(guard.TIMEOUT_MAX * 2)) is None
+        chosen, warning = guard.resolve_timeout(None, {"timeout": "12"})
+        assert chosen == 12 and warning is None
+        chosen, warning = guard.resolve_timeout("3", {"timeout": "12"})
+        assert chosen == 3 and warning is None
+        chosen, warning = guard.resolve_timeout("0", None)
+        assert chosen == guard.DEFAULT_TIMEOUT and warning
+        assert guard.parse_args(["--timeout", "4", "--shell"]).timeout == "4"
+        assert guard.parse_args(["--timeout=8"]).timeout == "8"
+        assert guard.parse_args(["--version"]).timeout is None
+
+    def test_signal_while_a_child_starts_still_kills_it(self):
+        limit = guard.DecisionLimit(30)
+        limit.install()
+        previous = guard._ACTIVE
+        guard._ACTIVE = limit
+        original = subprocess.Popen
+        pid = {}
+
+        def popen(*args, **kwargs):
+            proc = original(*args, **kwargs)
+            pid["pid"] = proc.pid
+            os.kill(os.getpid(), signal.SIGTERM)
+            return proc
+
+        subprocess.Popen = popen
+        raised = False
+        try:
+            try:
+                guard.run_captured(["sleep", "30"], {"PATH": "/usr/bin:/bin"}, new_session=True)
+            except guard._Terminated:
+                raised = True
+        finally:
+            subprocess.Popen = original
+            limit.restore()
+            guard._ACTIVE = previous
+        assert raised
+        try:
+            os.kill(pid["pid"], 0)
+        except OSError:
+            alive = False
+        else:
+            alive = True
+            try:
+                os.kill(pid["pid"], signal.SIGKILL)
+            except OSError:
+                pass
+        assert not alive
+
+    def test_limit_and_sigterm_end_the_decision(self):
+        # The in-process deadline and the signal path both become failure tokens.
+        env = _env()
+
+        def hangs(_env):
+            time_slept = 0.0
+            while time_slept < 30:
+                if guard._ACTIVE is not None:
+                    guard._ACTIVE.check()
+                time.sleep(0.05)
+                time_slept += 0.05
+            return guard.CpuProbe("ok", ZEN2, (ZEN2,), "")
+
+        outcome = guard.limited_decide(
+            env, shell=False, timeout=0.4, cpu_probe=hangs, accel_probe=_accel()
+        )
+        assert outcome.kind == "failed"
+        assert outcome.changes["EESSI_ARCH_GUARD_FAILED"].endswith("->timeout")
 
     def test_readme_lists_every_flag_and_env_name(self):
         root = Path(__file__).resolve().parents[1]

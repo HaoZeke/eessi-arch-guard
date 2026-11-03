@@ -6,11 +6,14 @@ EESSI_PROC_CPUINFO and a nvidia-smi stub that is first on PATH.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -51,6 +54,27 @@ def _assert_prolog(proc, code=0):
         if value is not None:
             assert "\n" not in value and "\r" not in value
     return changes, printed
+
+
+def _stop_limit(timeout: float) -> float:
+    """Decision timeout plus the worst-case post-kill waits."""
+    return timeout + 3 * guard.POST_KILL_WAIT_SECONDS
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _wait_until_dead(pid: int) -> None:
+    for _ in range(50):
+        if not _pid_alive(pid):
+            return
+        time.sleep(0.05)
+    os.kill(pid, signal.SIGKILL)
 
 
 def _apply(env, changes):
@@ -551,6 +575,236 @@ class IntegrationTests(unittest.TestCase):
             os.close(write_fd)
             self.assertEqual(blocked.returncode, 0, (args, blocked.returncode, blocked.stderr))
 
+    def _hang_env(self, loaded=ZEN4, node="zen4"):
+        self.site.write_cpuinfo(node)
+        env = harness.base_env(self.site, loaded, ["R/4.4.2"], gpu="1", gpu_cc="8.0")
+        env["TMPDIR"] = self.site.root
+        env["SLURM_JOB_ID"] = "6060"
+        env["SLURM_STEP_ID"] = "batch"
+        env["EESSI_TEST_HANG_PID"] = os.path.join(self.site.root, "hang.pid")
+        return env
+
+    def test_hung_gpu_query_is_stopped_and_not_cached(self):
+        env = self._hang_env()
+        env["EESSI_TEST_GPU_HANG"] = "30"
+        path = guard.cache_file_path(env)
+        started = time.monotonic()
+        proc = harness.run_guard(env, ["--timeout", "1"])
+        elapsed = time.monotonic() - started
+        try:
+            changes, printed = _assert_prolog(proc)
+            self.assertLess(elapsed, _stop_limit(1))
+            self.assertTrue(changes["EESSI_ARCH_GUARD_FAILED"].endswith("->timeout"))
+            self.assertTrue(printed)
+            self.assertFalse(os.path.isfile(path))
+            pid = int(Path(env["EESSI_TEST_HANG_PID"]).read_text(encoding="ascii"))
+            _wait_until_dead(pid)
+            self.assertFalse(_pid_alive(pid))
+        finally:
+            pid_path = Path(env["EESSI_TEST_HANG_PID"])
+            if pid_path.is_file():
+                try:
+                    os.kill(int(pid_path.read_text(encoding="ascii")), signal.SIGKILL)
+                except OSError:
+                    pass
+
+    def test_hung_reload_is_stopped(self):
+        env = self._cpu_env(ZEN4, "zen2")
+        env["TMPDIR"] = self.site.root
+        env["SLURM_JOB_ID"] = "6161"
+        env["EESSI_TEST_LMOD_HANG"] = "30"
+        env["EESSI_TEST_HANG_PID"] = os.path.join(self.site.root, "hang.pid")
+        started = time.monotonic()
+        proc = harness.run_guard(env, ["--timeout", "1"])
+        elapsed = time.monotonic() - started
+        try:
+            changes, _printed = _assert_prolog(proc)
+            self.assertLess(elapsed, _stop_limit(1))
+            self.assertTrue(changes["EESSI_ARCH_GUARD_FAILED"].endswith("->timeout"))
+            self.assertNotIn("EESSI_SOFTWARE_SUBDIR", changes)
+            pid = int(Path(env["EESSI_TEST_HANG_PID"]).read_text(encoding="ascii"))
+            _wait_until_dead(pid)
+            self.assertFalse(_pid_alive(pid))
+        finally:
+            pid_path = Path(env["EESSI_TEST_HANG_PID"])
+            if pid_path.is_file():
+                try:
+                    os.kill(int(pid_path.read_text(encoding="ascii")), signal.SIGKILL)
+                except OSError:
+                    pass
+
+    def test_lock_wait_ends_at_the_limit(self):
+        env = self._cpu_env(ZEN4, "zen2")
+        env["TMPDIR"] = self.site.root
+        env["SLURM_JOB_ID"] = "6262"
+        path = guard.cache_file_path(env)
+        lock_path = path + ".lock"
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            started = time.monotonic()
+            proc = harness.run_guard(env, ["--timeout", "1"])
+            elapsed = time.monotonic() - started
+            changes, _printed = _assert_prolog(proc)
+            self.assertLess(elapsed, _stop_limit(1))
+            self.assertGreaterEqual(elapsed, 0.5)
+            self.assertTrue(changes["EESSI_ARCH_GUARD_FAILED"].endswith("->timeout"))
+            self.assertFalse(os.path.isfile(path))
+            self.assertEqual(harness.log_lines(self.site.log), [])
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def test_sigterm_stops_the_decision(self):
+        env = self._hang_env()
+        env["EESSI_TEST_GPU_HANG"] = "30"
+        proc = subprocess.Popen(
+            [sys.executable, "-I", str(harness.GUARD), "--timeout", "30"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        pid_path = Path(env["EESSI_TEST_HANG_PID"])
+        try:
+            for _ in range(50):
+                if pid_path.is_file():
+                    break
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.05)
+            self.assertTrue(pid_path.is_file(), proc.stderr)
+            proc.send_signal(signal.SIGTERM)
+            out, err = proc.communicate(timeout=10)
+            self.assertEqual(proc.returncode, 0, err)
+            changes, _printed = apply_task_prolog(out)
+            self.assertTrue(changes["EESSI_ARCH_GUARD_FAILED"].endswith("->terminated"))
+            child = int(pid_path.read_text(encoding="ascii"))
+            _wait_until_dead(child)
+            self.assertFalse(_pid_alive(child))
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+            if pid_path.is_file():
+                try:
+                    os.kill(int(pid_path.read_text(encoding="ascii")), signal.SIGKILL)
+                except OSError:
+                    pass
+
+    def test_limit_does_not_undo_a_cached_decision(self):
+        env = self._hang_env(loaded=ZEN4, node="zen2")
+        env["EESSI_TEST_GPU_HANG"] = "30"
+        path = guard.cache_file_path(env)
+        guard._write_cache(
+            path,
+            guard.Outcome(
+                {"SENTINEL": "cached-decision", "EESSI_ARCH_GUARD_RELOADED": "from-cache"},
+                "cached",
+                "reloaded",
+            ),
+        )
+        before = Path(path).read_bytes()
+        started = time.monotonic()
+        proc = harness.run_guard(env, ["--timeout", "1"])
+        elapsed = time.monotonic() - started
+        changes, printed = _assert_prolog(proc)
+        self.assertLess(elapsed, 0.8)
+        self.assertEqual(changes["SENTINEL"], "cached-decision")
+        self.assertEqual(changes["EESSI_ARCH_GUARD_RELOADED"], "from-cache")
+        self.assertEqual(printed, ["cached"])
+        self.assertEqual(Path(path).read_bytes(), before)
+        self.assertEqual(harness.log_lines(self.site.arch_log), [])
+
+    def test_chain_keeps_the_config_timeout(self):
+        conf = Path(harness.GUARD).with_name("eessi-arch-guard.conf")
+        conf.write_text("timeout = 1\n", encoding="utf-8")
+        subprocess.check_call(["sudo", "chown", "root:root", str(conf)])
+        subprocess.check_call(["sudo", "chmod", "644", str(conf)])
+        ok_path = os.path.join(self.site.root, "chain-ok.sh")
+        with open(ok_path, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\necho 'export FROM_CHAIN=yes'\n")
+        os.chmod(ok_path, 0o755)
+        env = self._hang_env()
+        env["EESSI_TEST_GPU_HANG"] = "30"
+        try:
+            started = time.monotonic()
+            proc = harness.run_guard(env, ["--chain", ok_path])
+            elapsed = time.monotonic() - started
+            changes, _printed = _assert_prolog(proc)
+            self.assertLess(elapsed, _stop_limit(1))
+            self.assertEqual(changes["FROM_CHAIN"], "yes")
+            self.assertTrue(changes["EESSI_ARCH_GUARD_FAILED"].endswith("->timeout"))
+        finally:
+            subprocess.check_call(["sudo", "rm", "-f", str(conf)])
+            pid_path = Path(env["EESSI_TEST_HANG_PID"])
+            if pid_path.is_file():
+                try:
+                    os.kill(int(pid_path.read_text(encoding="ascii")), signal.SIGKILL)
+                except OSError:
+                    pass
+
+    def test_setsid_grandchild_does_not_hold_the_guard(self):
+        env = self._hang_env()
+        env["EESSI_TEST_SETSID_HOLD"] = "30"
+        started = time.monotonic()
+        proc = harness.run_guard(env, ["--timeout", "1"])
+        elapsed = time.monotonic() - started
+        pid_path = Path(env["EESSI_TEST_HANG_PID"])
+        try:
+            changes, _printed = _assert_prolog(proc)
+            self.assertLess(elapsed, _stop_limit(1))
+            self.assertTrue(changes["EESSI_ARCH_GUARD_FAILED"].endswith("->timeout"))
+        finally:
+            if pid_path.is_file():
+                try:
+                    os.kill(int(pid_path.read_text(encoding="ascii")), signal.SIGKILL)
+                except OSError:
+                    pass
+
+    def test_killed_helper_leaves_no_tmp_directory(self):
+        before = set(Path("/tmp").glob("eessi-arch-guard-*"))
+        env = self._cpu_env(ZEN4, "zen2")
+        env["TMPDIR"] = self.site.root
+        env["SLURM_JOB_ID"] = "6363"
+        env["EESSI_TEST_APPLY_HANG"] = "30"
+        started = time.monotonic()
+        proc = harness.run_guard(env, ["--timeout", "1"])
+        elapsed = time.monotonic() - started
+        try:
+            changes, _printed = _assert_prolog(proc)
+            self.assertLess(elapsed, _stop_limit(1))
+            self.assertTrue(changes["EESSI_ARCH_GUARD_FAILED"].endswith("->timeout"))
+            after = set(Path("/tmp").glob("eessi-arch-guard-*"))
+            self.assertEqual(before, after)
+        finally:
+            for path in Path("/tmp").glob("eessi-arch-guard-*"):
+                if path not in before:
+                    shutil.rmtree(path, ignore_errors=True)
+
+    def test_config_timeout_bounds_the_decision(self):
+        conf = Path(harness.GUARD).with_name("eessi-arch-guard.conf")
+        conf.write_text("timeout = 1\n", encoding="utf-8")
+        subprocess.check_call(["sudo", "chown", "root:root", str(conf)])
+        subprocess.check_call(["sudo", "chmod", "644", str(conf)])
+        env = self._hang_env()
+        env["EESSI_TEST_GPU_HANG"] = "30"
+        try:
+            started = time.monotonic()
+            proc = harness.run_guard(env)
+            elapsed = time.monotonic() - started
+            changes, _printed = _assert_prolog(proc)
+            self.assertLess(elapsed, _stop_limit(1))
+            self.assertTrue(changes["EESSI_ARCH_GUARD_FAILED"].endswith("->timeout"))
+        finally:
+            subprocess.check_call(["sudo", "rm", "-f", str(conf)])
+            pid_path = Path(env["EESSI_TEST_HANG_PID"])
+            if pid_path.is_file():
+                try:
+                    os.kill(int(pid_path.read_text(encoding="ascii")), signal.SIGKILL)
+                except OSError:
+                    pass
+
     def test_help_version_and_shebang(self):
         first = harness.GUARD.read_text(encoding="utf-8").splitlines()[0]
         self.assertEqual(first, "#!/usr/bin/python3 -I")
@@ -561,5 +815,6 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn("--restore", proc.stdout)
         self.assertIn("--version", proc.stdout)
         self.assertIn("--chain", proc.stdout)
+        self.assertIn("--timeout", proc.stdout)
         self.assertIn("-h", proc.stdout)
         self.assertEqual(proc.returncode, 0)

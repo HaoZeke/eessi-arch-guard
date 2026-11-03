@@ -16,6 +16,7 @@ The program:
 4. Refuses module names that fail `^[A-Za-z0-9_][A-Za-z0-9._+-]*(/[A-Za-z0-9_][A-Za-z0-9._+-]*)+$` (length at most 256). The EESSI entry must be exactly one `EESSI/<version>` name. A bad name is a failed restore, not a string interpolated into a shell.
 5. Fails loud, and still exits 0. A missing software directory, a broken archdetect, an unusable `LMOD_CMD`, an unsafe name, or a module that will not load sets `EESSI_ARCH_GUARD_FAILED` and prints one line. `EESSI_ARCH_GUARD=0` is the opt-out (silent). `EESSI_ARCH_GUARD_MISSING=ignore` is the narrower opt-out for a node that has no EESSI software directory. Exit 0 is required: on current Slurm master, a non-zero TaskProlog status is `_exit(status)` and the task never runs. Loud means the user and the environment can see the failure. It does not mean killing the task.
 6. `--shell` prints `export`/`unset` with `shlex.quote` on stdout, for `eval "$(eessi-arch-guard --shell)"`. The human message goes to stderr, so command substitution does not capture it and does not need an `echo` inside the eval. Prolog mode uses Slurm's `print` line, which master writes to the task's stdout. Those channels differ because Slurm has no stderr form of `print`.
+7. One deadline covers the lock wait, both archdetect runs, and the restore helper. The default is 60 seconds (`DEFAULT_TIMEOUT`), Slurm's `DEFAULT_UNKILLABLE_TIMEOUT`. `--timeout SEC` overrides a `timeout = SEC` line in the root-owned config. `SEC` is a positive number of seconds at most CPython's `TIMEOUT_MAX` (`threading.TIMEOUT_MAX`); anything else keeps the default and warns. The children run in their own sessions. `SIGTERM` is held until the child process group is known, then released. At the deadline or on `SIGTERM` the guard SIGKILLs that group, sets `EESSI_ARCH_GUARD_FAILED` to `->timeout` or `->terminated`, exits 0, and does not cache that failure. After the kill the guard still waits up to `POST_KILL_WAIT_SECONDS` for the pipe to close. A result already in the cache is returned unchanged. A decision that has finished is still the result if the signal arrives while it is published.
 
 The helper command is `python3 -I -X utf8`. Each name and value crosses as one Latin-1 character per environment byte, and `-X utf8` turns that text back into those bytes for Lmod.
 
@@ -92,9 +93,11 @@ These were rejected before this repo existed. The new information does not reviv
 | A module has no build for this target | Loud failure. Nothing from the restore is applied. Each module is probed so the message can name more than the first Lmod error. Probing stops after 32. |
 | A changed variable cannot be expressed as a prolog line | Loud failure. No partial delta. |
 | Any unexpected exception | One skip line, exit 0. |
+| The decision is still running at the deadline | `->timeout`, the waited-on process group is SIGKILLed, exit 0, nothing cached. |
+| `SIGTERM` during the decision | `->terminated`, the same kill, exit 0, nothing cached. |
 | Chained prolog exits non-zero | That status is returned and this program does not restore. Slurm will kill the task, which is what that prolog already did. |
 
-`EESSI_ARCH_GUARD_RELOADED` is `was->now`. When the accelerator differs, each side is `<cpu> <accel>` or `<cpu> no accel`. `EESSI_ARCH_GUARD_FAILED` uses the same shape, with a fixed token (`no-software-dir`, `archdetect-failed`, `unsafe-module-name`, `unsafe-environment`, `lmod-unavailable`, `restore-failed`) when there is no selected target.
+`EESSI_ARCH_GUARD_RELOADED` is `was->now`. When the accelerator differs, each side is `<cpu> <accel>` or `<cpu> no accel`. `EESSI_ARCH_GUARD_FAILED` uses the same shape, with a fixed token (`no-software-dir`, `archdetect-failed`, `unsafe-module-name`, `unsafe-environment`, `lmod-unavailable`, `restore-failed`, `timeout`, `terminated`) when there is no selected target.
 
 ## Install shape
 

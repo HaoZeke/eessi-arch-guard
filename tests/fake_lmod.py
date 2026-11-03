@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 EB_NAME = re.compile(r"[^A-Za-z0-9]")
 
@@ -99,6 +100,9 @@ def eb_key(prefix: str, name: str) -> str:
 def do_purge() -> int:
     log("argv " + " ".join(sys.argv[1:]))
     log("purge")
+    hang = os.environ.get("EESSI_TEST_APPLY_HANG", "")
+    if hang:
+        emit("sleep %s" % hang)
     base = os.environ.get("EESSI_TEST_BASE_PATH", "/usr/bin:/bin")
     emit("export LOADEDMODULES=''")
     emit("export _LMFILES_=''")
@@ -214,6 +218,13 @@ def do_load(names) -> int:
 
 
 def main() -> int:
+    hang = os.environ.get("EESSI_TEST_LMOD_HANG", "")
+    if hang:
+        pid_path = os.environ.get("EESSI_TEST_HANG_PID", "")
+        if pid_path:
+            with open(pid_path, "w", encoding="ascii") as handle:
+                handle.write("%s\n" % os.getpid())
+        time.sleep(float(hang))
     args = sys.argv[1:]
     if not args or args[0] != "bash":
         return fail("fake lmod: expected the bash shell name\n")

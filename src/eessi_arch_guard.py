@@ -19,10 +19,13 @@ import re
 import secrets
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from typing import Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 __version__ = "0.1.0"
@@ -105,23 +108,44 @@ MAX_ARCH_STDOUT = 65536
 # is 4094 bytes. Current master does not cap the line. Stay inside the
 # 17.11 read so one export cannot continue as a second directive.
 PROLOG_LINE_MAX = 4094
+# Slurm src/common/read_config.h DEFAULT_UNKILLABLE_TIMEOUT. One deadline
+# covers the whole decision.
+DEFAULT_TIMEOUT = 60.0
+TIMEOUT_MAX = threading.TIMEOUT_MAX
+# flock has no timeout and Python retries EINTR, so the wait is a
+# non-blocking loop. 0.05 s still ends a 1 s deadline in one shot, and a
+# 192-task step does not spin on the lock.
+LOCK_POLL_SECONDS = 0.05
+# After SIGKILL, a setsid grandchild can keep the pipe open. 5 s is enough
+# for a killed child to drop its fds. _finish_child may wait this long in
+# communicate and twice more in wait, so the worst case is
+# 3x POST_KILL_WAIT_SECONDS.
+POST_KILL_WAIT_SECONDS = 5.0
 
 APPLY_SH = """\
 source "$1" >/dev/null || exit 4
 exec env -0
 """
 
+
+def _seconds_label(value: float) -> str:
+    if value == int(value):
+        return str(int(value))
+    return str(value)
+
+
 HELP = """\
-usage: eessi-arch-guard [--shell] [--chain PATH] [--restore] [-h|--help] [--version]
+usage: eessi-arch-guard [--shell] [--chain PATH] [--timeout SEC] [--restore] [-h|--help] [--version]
 
 Slurm TaskProlog: when the loaded EESSI CPU or accelerator target is not this
 node's, print export/unset lines for the reloaded module environment.
 --shell prints bash for: eval "$(eessi-arch-guard --shell)"
 --chain PATH runs an existing task prolog first. Slurm does not pass arguments,
 so a site sets this in a wrapper or in a root-owned eessi-arch-guard.conf.
+--timeout SEC bounds the decision. The default is %s seconds.
 --restore reads a JSON restore request on stdin and writes the JSON result.
 -h, --help print this text. --version prints the version.
-"""
+""" % _seconds_label(DEFAULT_TIMEOUT)
 
 
 class Outcome(NamedTuple):
@@ -387,12 +411,170 @@ def parse_cpu_line(stdout: str) -> Optional[List[str]]:
     return line.split(":")
 
 
+class _Deadline(BaseException):
+    """The decision's time limit ran out. Not an Exception, so it is not cached."""
+
+
+class _Terminated(BaseException):
+    """SIGTERM arrived during the decision. Not an Exception, so it is not cached."""
+
+
+class DecisionLimit:
+    """One deadline for the lock, both archdetect runs, and the restore helper."""
+
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+        self.deadline = time.monotonic() + seconds
+        self.child_pgid: Optional[int] = None
+        self.terminated = False
+        self.committing = False
+        self._previous = None
+
+    def remaining(self) -> float:
+        return self.deadline - time.monotonic()
+
+    def check(self) -> None:
+        if self.committing:
+            return
+        if self.terminated:
+            raise _Terminated()
+        if self.remaining() <= 0:
+            raise _Deadline()
+
+    def install(self) -> None:
+        self._previous = signal.signal(signal.SIGTERM, self._handle)
+
+    def restore(self) -> None:
+        if self._previous is not None:
+            signal.signal(signal.SIGTERM, self._previous)
+            self._previous = None
+
+    def _handle(self, _signum: int, _frame: object) -> None:
+        self.terminated = True
+        if self.committing:
+            return
+        pgid = self.child_pgid
+        if not pgid:
+            return
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except OSError:
+            return
+
+    def hold_signals(self) -> None:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+
+    def release_signals(self) -> None:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+
+
+_ACTIVE: Optional[DecisionLimit] = None
+
+
+def _killpg(pgid: int) -> None:
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except OSError:
+        return
+
+
+def _finish_child(proc: subprocess.Popen) -> Tuple[bytes, bytes]:
+    """Collect output after a kill.
+
+    A setsid grandchild can hold the pipe. This may wait in communicate
+    and then twice in wait, so the worst case is 3x POST_KILL_WAIT_SECONDS.
+    """
+    try:
+        return proc.communicate(timeout=POST_KILL_WAIT_SECONDS)
+    except subprocess.TimeoutExpired:
+        for stream in (proc.stdout, proc.stderr, proc.stdin):
+            if stream is None:
+                continue
+            try:
+                stream.close()
+            except OSError:
+                pass
+        if proc.poll() is None:
+            _killpg(proc.pid)
+            try:
+                proc.wait(timeout=POST_KILL_WAIT_SECONDS)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                try:
+                    proc.wait(timeout=POST_KILL_WAIT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    pass
+        return b"", b""
+
+
+def run_captured(
+    argv: Sequence[str],
+    env: Mapping[str, str],
+    input_bytes: Optional[bytes] = None,
+    new_session: bool = False,
+) -> subprocess.CompletedProcess:
+    """Run a command. Under a decision limit, its session is killed at the deadline."""
+    limit = _ACTIVE
+    if limit is None or not new_session:
+        return subprocess.run(
+            list(argv),
+            input=input_bytes,
+            capture_output=True,
+            env=dict(env),
+            check=False,
+        )
+    limit.check()
+    limit.hold_signals()
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            list(argv),
+            stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=dict(env),
+            start_new_session=True,
+        )
+        limit.child_pgid = proc.pid
+    finally:
+        limit.release_signals()
+    if proc is None:
+        raise OSError("could not start")
+    try:
+        if limit.terminated and not limit.committing:
+            _killpg(proc.pid)
+            _finish_child(proc)
+            raise _Terminated()
+        remaining = limit.remaining()
+        if remaining <= 0:
+            _killpg(proc.pid)
+            _finish_child(proc)
+            raise _Deadline()
+        try:
+            out, err = proc.communicate(input=input_bytes, timeout=remaining)
+        except subprocess.TimeoutExpired:
+            _killpg(proc.pid)
+            _finish_child(proc)
+            raise _Deadline()
+        if limit.terminated and not limit.committing:
+            raise _Terminated()
+        return subprocess.CompletedProcess(list(argv), proc.returncode, out, err)
+    finally:
+        if limit.child_pgid == proc.pid:
+            limit.child_pgid = None
+        if proc.poll() is None:
+            _killpg(proc.pid)
+            _finish_child(proc)
+
+
 def _run_bash(args: Sequence[str], env: Mapping[str, str]) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    return run_captured(
         ["bash", "--noprofile", "--norc", "--", *args],
-        capture_output=True,
-        env=strip_startup(env),
-        check=False,
+        strip_startup(env),
+        new_session=_ACTIVE is not None,
     )
 
 
@@ -495,7 +677,10 @@ def _parse_env0(blob: bytes) -> Dict[str, str]:
 def source_exports(
     module_env: Mapping[str, str], script: bytes
 ) -> Tuple[Optional[Dict[str, str]], str]:
-    tmp = tempfile.mkdtemp(prefix="eessi-arch-guard-", dir="/tmp")
+    base = os.environ.get("EESSI_ARCH_GUARD_WORKDIR", "/tmp")
+    if not (safe_absolute(base) and os.path.isdir(base)):
+        base = "/tmp"
+    tmp = tempfile.mkdtemp(prefix="eessi-arch-guard-", dir=base)
     try:
         os.chmod(tmp, 0o700)
         fragment = os.path.join(tmp, "fragment.sh")
@@ -640,42 +825,50 @@ def call_restore(
         "modules": [to_wire(name) for name in modules],
         "lmod": to_wire(env.get("LMOD_CMD", "")),
     }
+    work = tempfile.mkdtemp(prefix="eessi-arch-guard-", dir="/tmp")
     clean = {
         "PATH": "/usr/bin:/bin",
         "LC_ALL": "C",
         "LANG": "C",
         "HOME": "/tmp",
         "TMPDIR": "/tmp",
+        "EESSI_ARCH_GUARD_WORKDIR": work,
     }
     try:
-        proc = subprocess.run(
-            [sys.executable, "-I", "-X", "utf8", os.path.abspath(__file__), "--restore"],
-            input=json.dumps(payload).encode("utf-8"),
-            capture_output=True,
-            env=clean,
-            check=False,
+        try:
+            proc = run_captured(
+                [sys.executable, "-I", "-X", "utf8", os.path.abspath(__file__), "--restore"],
+                clean,
+                input_bytes=json.dumps(payload).encode("utf-8"),
+                new_session=_ACTIVE is not None,
+            )
+        except OSError as exc:
+            return RestoreResult(False, None, (), "could not start restore helper: %s" % exc)
+        if proc.returncode != 0 or not proc.stdout:
+            err = proc.stderr.decode("utf-8", "replace")
+            return RestoreResult(False, None, (), one_line(err or "restore helper failed", 300))
+        try:
+            data = json.loads(proc.stdout.decode("utf-8"))
+        except json.JSONDecodeError:
+            return RestoreResult(False, None, (), "restore helper returned invalid output")
+        missing_raw = data.get("missing") or []
+        missing = tuple(
+            name for name in missing_raw if isinstance(name, str) and module_name_ok(name)
         )
-    except OSError as exc:
-        return RestoreResult(False, None, (), "could not start restore helper: %s" % exc)
-    if proc.returncode != 0 or not proc.stdout:
-        err = proc.stderr.decode("utf-8", "replace")
-        return RestoreResult(False, None, (), one_line(err or "restore helper failed", 300))
-    try:
-        data = json.loads(proc.stdout.decode("utf-8"))
-    except json.JSONDecodeError:
-        return RestoreResult(False, None, (), "restore helper returned invalid output")
-    missing_raw = data.get("missing") or []
-    missing = tuple(name for name in missing_raw if isinstance(name, str) and module_name_ok(name))
-    if not data.get("ok"):
-        return RestoreResult(False, None, missing, one_line(str(data.get("error") or ""), 300))
-    restored = data.get("env")
-    if not isinstance(restored, dict):
-        return RestoreResult(False, None, missing, "restore helper returned no environment")
-    try:
-        cleaned = {from_wire(str(key)): from_wire(str(value)) for key, value in restored.items()}
-    except UnicodeError:
-        return RestoreResult(False, None, missing, "restore helper returned no environment")
-    return RestoreResult(True, cleaned, missing, "")
+        if not data.get("ok"):
+            return RestoreResult(False, None, missing, one_line(str(data.get("error") or ""), 300))
+        restored = data.get("env")
+        if not isinstance(restored, dict):
+            return RestoreResult(False, None, missing, "restore helper returned no environment")
+        try:
+            cleaned = {
+                from_wire(str(key)): from_wire(str(value)) for key, value in restored.items()
+            }
+        except UnicodeError:
+            return RestoreResult(False, None, missing, "restore helper returned no environment")
+        return RestoreResult(True, cleaned, missing, "")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def _side(text: str) -> str:
@@ -722,6 +915,8 @@ def decide(
     accel_probe=probe_accel,
     restore=call_restore,
 ) -> Outcome:
+    if _ACTIVE is not None:
+        _ACTIVE.check()
     if env.get("EESSI_ARCH_GUARD") == "0":
         return Outcome({}, None, "skip", "EESSI_ARCH_GUARD=0")
     was = env.get("EESSI_SOFTWARE_SUBDIR", "")
@@ -994,6 +1189,21 @@ def _write_cache(path: str, outcome: Outcome) -> None:
         os.close(dirfd)
 
 
+def _lock_exclusive(lockfd: int) -> None:
+    limit = _ACTIVE
+    if limit is None:
+        fcntl.flock(lockfd, fcntl.LOCK_EX)
+        return
+    while True:
+        limit.check()
+        try:
+            fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            pause = min(LOCK_POLL_SECONDS, max(limit.remaining(), 0.0))
+            time.sleep(pause)
+
+
 def cached_decide(
     env: Mapping[str, str],
     shell: bool,
@@ -1021,17 +1231,111 @@ def cached_decide(
             return decide(env, shell, cpu_probe, accel_probe, restore)
         try:
             os.fchmod(lockfd, 0o600)
-            fcntl.flock(lockfd, fcntl.LOCK_EX)
+            _lock_exclusive(lockfd)
             loaded = _read_cache(directory, name, shell)
             if loaded is not None:
                 return loaded
+            if _ACTIVE is not None:
+                _ACTIVE.check()
             outcome = decide(env, shell, cpu_probe, accel_probe, restore)
-            _write_cache(path, outcome)
+            if _ACTIVE is not None:
+                _ACTIVE.committing = True
+            try:
+                _write_cache(path, outcome)
+            finally:
+                if _ACTIVE is not None:
+                    _ACTIVE.committing = False
             return outcome
         finally:
             os.close(lockfd)
     finally:
         os.close(dirfd)
+
+
+def _limit_outcome(env: Mapping[str, str], token: str, message: str) -> Outcome:
+    return _failed(env.get("EESSI_SOFTWARE_SUBDIR", ""), token, message)
+
+
+def limited_decide(
+    env: Mapping[str, str],
+    shell: bool,
+    timeout: float = DEFAULT_TIMEOUT,
+    cpu_probe=probe_cpu,
+    accel_probe=probe_accel,
+    restore=call_restore,
+) -> Outcome:
+    """Decide under one deadline. A timeout or SIGTERM is not written to the cache."""
+    global _ACTIVE
+    if _ACTIVE is not None:
+        return cached_decide(env, shell, cpu_probe, accel_probe, restore)
+    limit = DecisionLimit(timeout)
+    _ACTIVE = limit
+    limit.install()
+    try:
+        try:
+            return cached_decide(env, shell, cpu_probe, accel_probe, restore)
+        except _Deadline:
+            path = cache_file_path(env)
+            if path is not None:
+                directory, name = os.path.split(path)
+                loaded = _read_cache(directory, name, shell)
+                if loaded is not None:
+                    return loaded
+            return _limit_outcome(
+                env,
+                "timeout",
+                "eessi-arch-guard: decision exceeded the time limit; "
+                "environment left as it was",
+            )
+        except _Terminated:
+            return _limit_outcome(
+                env,
+                "terminated",
+                "eessi-arch-guard: decision was terminated; environment left as it was",
+            )
+    finally:
+        limit.restore()
+        _ACTIVE = None
+
+
+def parse_timeout(text: str) -> Optional[float]:
+    """A positive number of seconds at most TIMEOUT_MAX, or None."""
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        return None
+    if value != value or value <= 0 or value > TIMEOUT_MAX:
+        return None
+    return value
+
+
+def resolve_timeout(
+    cli_text: Optional[str], settings: Optional[Mapping[str, str]]
+) -> Tuple[float, Optional[str]]:
+    """CLI overrides the config key, which overrides DEFAULT_TIMEOUT."""
+    chosen = DEFAULT_TIMEOUT
+    warnings = []
+    if settings and "timeout" in settings:
+        parsed = parse_timeout(settings["timeout"])
+        if parsed is None:
+            warnings.append(
+                "eessi-arch-guard: config timeout is not a positive number of seconds "
+                "at most %s" % TIMEOUT_MAX
+            )
+        else:
+            chosen = parsed
+    if cli_text is not None:
+        parsed = parse_timeout(cli_text)
+        if parsed is None:
+            warnings.append(
+                "eessi-arch-guard: --timeout is not a positive number of seconds at most %s"
+                % TIMEOUT_MAX
+            )
+        else:
+            chosen = parsed
+    if not warnings:
+        return chosen, None
+    return chosen, " ".join(warnings)
 
 
 def _config_untrusted(path: str) -> Optional[str]:
@@ -1157,11 +1461,13 @@ class Args(NamedTuple):
     help: bool
     version: bool
     chain: Optional[str]
+    timeout: Optional[str]
 
 
 def parse_args(argv: Sequence[str]) -> Args:
     shell = restore = help_ = version = False
     chain = None
+    timeout = None
     index = 0
     while index < len(argv):
         arg = argv[index]
@@ -1178,8 +1484,13 @@ def parse_args(argv: Sequence[str]) -> Args:
             chain = argv[index] if index < len(argv) else ""
         elif arg.startswith("--chain="):
             chain = arg.split("=", 1)[1]
+        elif arg == "--timeout":
+            index += 1
+            timeout = argv[index] if index < len(argv) else ""
+        elif arg.startswith("--timeout="):
+            timeout = arg.split("=", 1)[1]
         index += 1
-    return Args(shell, restore, help_, version, chain)
+    return Args(shell, restore, help_, version, chain, timeout)
 
 
 def _announce(env: Mapping[str, str], shell: bool) -> bool:
@@ -1221,26 +1532,41 @@ def _main(argv: Sequence[str]) -> int:
 
     env = dict(os.environ)
     chain_out = b""
+    # `timeout` is read for `--shell` and for a `--chain` wrapper too.
+    settings, config_warning = site_config(__file__)
+    notes = []
+    if config_warning:
+        notes.append(config_warning)
+    chain = None
     if not args.shell:
         chain = args.chain
-        warning = None
         if chain is None:
-            chain, warning = configured_chain(__file__)
+            chain = config_chain(settings)
+            if chain and not _chain_path_ok(chain):
+                notes.append(
+                    "eessi-arch-guard: config chain is not an absolute executable: %s"
+                    % one_line(chain, 200)
+                )
+                chain = None
         elif not _chain_path_ok(chain):
-            warning = "eessi-arch-guard: --chain is not an absolute executable"
+            notes.append("eessi-arch-guard: --chain is not an absolute executable")
             chain = None
-        if warning:
-            write_fd(2, message_bytes(warning) + b"\n")
-        if chain:
-            code, chain_out, err = run_chain(chain, env)
-            if err:
-                write_fd(2, err)
-            if code != 0:
-                _write_stdout(chain_out, b"")
-                return code
+    for note in notes:
+        write_fd(2, message_bytes(note) + b"\n")
+    if chain:
+        code, chain_out, err = run_chain(chain, env)
+        if err:
+            write_fd(2, err)
+        if code != 0:
+            _write_stdout(chain_out, b"")
+            return code
+
+    timeout, timeout_warning = resolve_timeout(args.timeout, settings)
+    if timeout_warning:
+        write_fd(2, message_bytes(timeout_warning) + b"\n")
 
     try:
-        outcome = cached_decide(env, shell=args.shell)
+        outcome = limited_decide(env, shell=args.shell, timeout=timeout)
         text = render_bytes(
             outcome.changes, outcome.message, args.shell, _announce(env, args.shell)
         )

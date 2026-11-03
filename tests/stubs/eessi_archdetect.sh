@@ -14,6 +14,16 @@ if [ -n "${EESSI_TEST_ARCH_LOG:-}" ]; then
     printf '%s\n' "$action" >> "$EESSI_TEST_ARCH_LOG"
 fi
 
+if [ -n "${EESSI_TEST_SETSID_HOLD:-}" ]; then
+    # Grandchild in its own session inherits this stdout pipe.
+    setsid bash -c "sleep ${EESSI_TEST_SETSID_HOLD}" &
+    if [ -n "${EESSI_TEST_HANG_PID:-}" ]; then
+        printf '%s\n' "$!" > "$EESSI_TEST_HANG_PID"
+    fi
+    sleep "${EESSI_TEST_SETSID_HOLD}"
+    exit 0
+fi
+
 cpuinfo="${EESSI_PROC_CPUINFO:-/proc/cpuinfo}"
 
 case "$action" in
