@@ -1050,16 +1050,27 @@ def _config_untrusted(path: str) -> Optional[str]:
     return None
 
 
-def parse_chain_config(text: str) -> Optional[str]:
-    chain = None
+def parse_config(text: str) -> Dict[str, str]:
+    settings: Dict[str, str] = {}
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        if key.strip() == "chain":
-            chain = value.strip()
-    return chain or None
+        key = key.strip()
+        if key:
+            settings[key] = value.strip()
+    return settings
+
+
+def parse_chain_config(text: str) -> Optional[str]:
+    return config_chain(parse_config(text))
+
+
+def config_chain(settings: Optional[Mapping[str, str]]) -> Optional[str]:
+    if not settings:
+        return None
+    return settings.get("chain") or None
 
 
 def _chain_path_ok(path: str) -> bool:
@@ -1068,8 +1079,8 @@ def _chain_path_ok(path: str) -> bool:
     return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
-def configured_chain(script_path: str) -> Tuple[Optional[str], Optional[str]]:
-    """Return (chain, warning). A user-owned config is not a chain source."""
+def site_config(script_path: str) -> Tuple[Optional[Dict[str, str]], Optional[str]]:
+    """Return (settings, warning). The first existing candidate wins."""
     beside = os.path.join(os.path.dirname(os.path.abspath(script_path)), "eessi-arch-guard.conf")
     for path in ("/etc/eessi-arch-guard.conf", beside):
         if not os.path.exists(path):
@@ -1082,15 +1093,23 @@ def configured_chain(script_path: str) -> Tuple[Optional[str], Optional[str]]:
                 text = handle.read()
         except OSError as exc:
             return None, "eessi-arch-guard: config ignored: %s" % exc
-        chain = parse_chain_config(text)
-        if chain and _chain_path_ok(chain):
-            return chain, None
-        if chain:
-            return None, (
-                "eessi-arch-guard: config chain is not an absolute executable: %s"
-                % one_line(chain, 200)
-            )
-        return None, None
+        return parse_config(text), None
+    return None, None
+
+
+def configured_chain(script_path: str) -> Tuple[Optional[str], Optional[str]]:
+    """Return (chain, warning). A user-owned config is not a chain source."""
+    settings, warning = site_config(script_path)
+    if warning:
+        return None, warning
+    chain = config_chain(settings)
+    if chain and _chain_path_ok(chain):
+        return chain, None
+    if chain:
+        return None, (
+            "eessi-arch-guard: config chain is not an absolute executable: %s"
+            % one_line(chain, 200)
+        )
     return None, None
 
 

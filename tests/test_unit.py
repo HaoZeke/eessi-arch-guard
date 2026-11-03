@@ -366,8 +366,13 @@ class UnitTests:
             _assert_writes_exit_zero(script, args)
 
     def test_chain_config_parser_and_untrusted_file(self):
-        assert guard.parse_chain_config("# comment\nchain = /bin/true\n") == "/bin/true"
+        text = "# comment\nchain = /bin/true\ntimeout = 60\n"
+        assert guard.parse_config(text) == {"chain": "/bin/true", "timeout": "60"}
+        assert guard.config_chain(guard.parse_config(text)) == "/bin/true"
+        assert guard.parse_chain_config(text) == "/bin/true"
         assert guard.parse_chain_config("other = 1\n") is None
+        assert guard.config_chain(None) is None
+        assert guard.config_chain({}) is None
         handle = tempfile.NamedTemporaryFile("w", delete=False)
         try:
             handle.write("chain = /bin/true\n")
