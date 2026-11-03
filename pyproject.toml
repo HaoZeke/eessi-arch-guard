@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eessi-arch-guard"
+version = "0.1.0"
+description = "Reload an EESSI module environment when a Slurm task lands on another CPU or GPU target."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Rohit Goswami", email = "rgoswami@ieee.org" }]
+requires-python = ">=3.9"
+keywords = ["eessi", "slurm", "lmod", "hpc"]
+classifiers = [
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+]
+dependencies = []
+
+[project.scripts]
+eessi-arch-guard = "eessi_arch_guard:main"
+
+[tool.setuptools]
+py-modules = ["eessi_arch_guard"]
+package-dir = { "" = "src" }
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]

@@ -1,0 +1,9 @@
+#!/bin/bash
+# Test stub. Prints the CSV line eessi_archdetect.sh accelpath parses,
+# or fails the way a node without a visible GPU fails.
+if [ "${EESSI_TEST_GPU:-none}" = "none" ] || [ "${EESSI_TEST_GPU:-none}" = "missing" ]; then
+    echo "No devices were found" >&2
+    exit 6
+fi
+cc="${EESSI_TEST_GPU_CC:-9.0}"
+printf 'Test GPU, 1, 1.0, %s\n' "$cc"
