@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -358,6 +359,19 @@ class UnitTests:
             assert "not owned by root" in reason
         finally:
             os.unlink(handle.name)
+
+    def test_readme_lists_every_flag_and_env_name(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "src" / "eessi_arch_guard.py").read_text(encoding="utf-8")
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        body = source.split("def parse_args", 1)[1].split("def _announce", 1)[0]
+        flags = set(re.findall(r'["\'](-{1,2}[A-Za-z][A-Za-z0-9-]*)["\']', body))
+        assert flags >= {"--shell", "--restore", "--help", "--version", "--chain", "-h"}
+        missing_flags = sorted(flag for flag in flags if flag not in readme)
+        assert missing_flags == []
+        names = set(re.findall(r'["\']([A-Z][A-Z0-9_]{1,})["\']', source))
+        missing_names = sorted(name for name in names if name not in readme)
+        assert missing_names == []
 
     def test_select_first_directory(self):
         root = tempfile.mkdtemp()

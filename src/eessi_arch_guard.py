@@ -105,13 +105,15 @@ exec env -0
 """
 
 HELP = """\
-usage: eessi-arch-guard [--shell] [--chain PATH] [--help] [--version]
+usage: eessi-arch-guard [--shell] [--chain PATH] [--restore] [-h|--help] [--version]
 
 Slurm TaskProlog: when the loaded EESSI CPU or accelerator target is not this
 node's, print export/unset lines for the reloaded module environment.
 --shell prints bash for: eval "$(eessi-arch-guard --shell)"
---chain runs an existing task prolog first. Slurm does not pass arguments, so
-a site sets this in a wrapper or in a root-owned eessi-arch-guard.conf.
+--chain PATH runs an existing task prolog first. Slurm does not pass arguments,
+so a site sets this in a wrapper or in a root-owned eessi-arch-guard.conf.
+--restore reads a JSON restore request on stdin and writes the JSON result.
+-h, --help print this text. --version prints the version.
 """
 
 

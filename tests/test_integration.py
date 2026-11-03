@@ -456,4 +456,8 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(proc.stdout.strip(), guard.__version__)
         proc = harness.run_guard({"PATH": "/usr/bin:/bin"}, ["--help"])
         self.assertIn("--shell", proc.stdout)
+        self.assertIn("--restore", proc.stdout)
+        self.assertIn("--version", proc.stdout)
+        self.assertIn("--chain", proc.stdout)
+        self.assertIn("-h", proc.stdout)
         self.assertEqual(proc.returncode, 0)

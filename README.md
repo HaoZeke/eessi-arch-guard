@@ -23,6 +23,19 @@ TaskProlog=/usr/local/sbin/eessi-arch-guard
 
 `pip install .` also installs a console script for `eessi-arch-guard --shell` on a login node. That generated script does not pass `-I`. Point `TaskProlog` at the file itself.
 
+## Flags
+
+```
+eessi-arch-guard [--shell] [--chain PATH] [--restore] [-h|--help] [--version]
+```
+
+`--shell` prints bash assignments for `eval "$(eessi-arch-guard --shell)"`. `--chain PATH` runs an existing task prolog first. The path has to be absolute and executable. `--restore` is the helper the prolog execs (`python3 -I <this file> --restore`). It reads one JSON request on stdin and writes one JSON result on stdout. The task environment is that request, not the helper's process environment. `-h` and `--help` print the usage text. `--version` prints the version.
+
+```sh
+python3 src/eessi_arch_guard.py --version
+python3 src/eessi_arch_guard.py --help
+```
+
 ## Chaining an existing TaskProlog
 
 Slurm execs the prolog with no arguments, so a user cannot pass `--chain`. Two site-controlled ways:
@@ -67,7 +80,7 @@ CPU: `eessi_archdetect.sh -a cpupath`, then the first candidate that has `<EESSI
 
 Module names must match `^[A-Za-z0-9_][A-Za-z0-9._+-]*(/[A-Za-z0-9_][A-Za-z0-9._+-]*)+$` and be at most 256 characters. Anything else is a failed restore, not a string passed to a shell. Prolog names match `^[A-Za-z_][A-Za-z0-9_]*$`. Prolog values must not contain CR, LF, or NUL. A value that cannot be carried aborts the whole restore. The task keeps the environment it arrived with.
 
-`SLURM_*`, `BASH_FUNC_*`, `TMPDIR`, `BASH_ENV`, and shell bookkeeping are never emitted. Bash for the restore is `bash --noprofile --norc` with `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS`, `BASH_XTRACEFD`, and `PS4` removed. The helper process itself is `python3 -I` with only `PATH`, `HOME`, `LANG`, `LC_ALL`, and `TMPDIR` in its environment. The task environment is data on that helper's stdin.
+`SLURM_*`, `BASH_FUNC_*`, `TMPDIR`, `BASH_ENV`, and shell bookkeeping are never emitted. The full denylist is `_`, `SHLVL`, `PWD`, `OLDPWD`, `TMPDIR`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS`, `BASH_XTRACEFD`, `PS4`, `BASH_ARGC`, `BASH_ARGV`, `BASH_LINENO`, `BASH_SOURCE`, `BASH_VERSINFO`, `BASH_VERSION`, `DIRSTACK`, `EPOCHREALTIME`, `EPOCHSECONDS`, `FUNCNAME`, `GROUPS`, `HOSTNAME`, `HOSTTYPE`, `IFS`, `MACHTYPE`, `OPTERR`, `OPTIND`, `OSTYPE`, `PIPESTATUS`, `PPID`, plus any `BASH_FUNC_*` or `SLURM_*` name. `PS1`, `PS2`, `PS3`, and `PROMPT_COMMAND` are the exception: an unsafe new value is left unchanged instead of failing the restore. Bash for the restore is `bash --noprofile --norc` with `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS`, `BASH_XTRACEFD`, and `PS4` removed. The helper process itself is `python3 -I` with only `PATH`, `HOME`, `LANG`, `LC_ALL`, and `TMPDIR` in its environment. The task environment is data on that helper's stdin. `LMOD_CMD` is the module command the helper execs.
 
 ## Failure modes
 
@@ -90,7 +103,9 @@ The program exits 0 except when a chained prolog exits non-zero. A non-zero stat
 
 `EESSI_ARCH_GUARD_RELOADED` is `was->now`. When the accelerator differs, each side is `<cpu> <accel>` or `<cpu> no accel`. `print` goes to the task's stdout, and only for `SLURM_LOCALID` 0 (or unset). A batch script that reads its own stdout will see that line. Slurm has no stderr form of `print`.
 
-Within one job step the first task on a node computes the result and the others read it. The cache key is uid, node, job, step, and a sha256 prefix of `EESSI_SOFTWARE_SUBDIR`, `EESSI_ACCEL_SUBDIR`, `LOADEDMODULES`, `MODULEPATH`, `EESSI_INIT_PREFIX`, `EESSI_PROC_CPUINFO`, and `PATH`. `EESSI_ARCH_GUARD` is not part of the key. The file is mode `0600` under `TMPDIR` if that directory exists, otherwise `/tmp`. `flock` is assumed to work on that directory. A symlink at the cache or lock path is not followed.
+Within one job step the first task on a node computes the result and the others read it. The cache key is uid, node, `SLURM_JOB_ID`, `SLURM_STEP_ID`, and a sha256 prefix of `EESSI_SOFTWARE_SUBDIR`, `EESSI_ACCEL_SUBDIR`, `LOADEDMODULES`, `MODULEPATH`, `EESSI_INIT_PREFIX`, `EESSI_PROC_CPUINFO`, and `PATH`. `EESSI_ARCH_GUARD` is not part of the key. The file is mode `0600` under `TMPDIR` if that directory exists, otherwise `/tmp`. `flock` is assumed to work on that directory. The cache and the lock are opened with `O_NOFOLLOW`. A symlink at either path is not followed.
+
+`EESSI_PREFIX`, `EESSI_OS_TYPE`, and `EESSI_INIT_PREFIX` have to be absolute, or a safe relative subdirectory for `EESSI_OS_TYPE`, before archdetect is run. `EESSI_VERSION` is whatever the loaded module exported. `SLURM_LOCALID` chooses who gets the `print` line: local task 0, or an unset id.
 
 ## Develop
 
