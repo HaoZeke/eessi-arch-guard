@@ -40,6 +40,16 @@ def fail(stderr: str, code: int = 1) -> int:
 
 
 def arch_cpu() -> tuple:
+    # eessi_archdetect.sh returns only this path when the variable is set.
+    # The guard sets it so a rejected march is not selected again on reload.
+    override = os.environ.get("EESSI_SOFTWARE_SUBDIR_OVERRIDE", "")
+    prefix = os.environ["EESSI_PREFIX"]
+    os_type = os.environ.get("EESSI_OS_TYPE", "linux")
+    if override:
+        directory = os.path.join(prefix, "software", os_type, override, "software")
+        if os.path.isdir(directory):
+            return override, ""
+        return None, "no software directory"
     script = os.path.join(os.environ["EESSI_INIT_PREFIX"], "eessi_archdetect.sh")
     proc = subprocess.run(
         ["bash", script, "-a", "cpupath"],
@@ -50,8 +60,6 @@ def arch_cpu() -> tuple:
     )
     if proc.returncode != 0:
         return None, proc.stderr.strip() or "cpupath failed"
-    prefix = os.environ["EESSI_PREFIX"]
-    os_type = os.environ.get("EESSI_OS_TYPE", "linux")
     for candidate in proc.stdout.strip().split(":"):
         if not candidate:
             continue
@@ -161,6 +169,8 @@ def do_load_eessi(version_name: str) -> int:
     emit("export EESSI_OS_TYPE='%s'" % os_type)
     emit("export EESSI_INIT_PREFIX='%s'" % os.environ["EESSI_INIT_PREFIX"])
     emit("export EESSI_SOFTWARE_SUBDIR='%s'" % cpu)
+    if os.environ.get("EESSI_SOFTWARE_SUBDIR_OVERRIDE"):
+        emit("export EESSI_ARCHDETECT_OPTIONS='%s'" % cpu)
     if accel:
         emit("export EESSI_ACCEL_SUBDIR='%s'" % accel)
     else:

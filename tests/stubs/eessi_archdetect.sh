@@ -2,6 +2,57 @@
 # Test stub. Same argv contract as eessi_archdetect.sh: [-a] cpupath|accelpath.
 # CPU candidates come from EESSI_PROC_CPUINFO. Accel calls nvidia-smi.
 # This is not the EESSI script.
+# An eessi_arch_matches line, or a zen model-name token, is the short path
+# the other tests use. Otherwise the x86 flag list from eessi_arch_x86.spec
+# is applied. That list does not require waitpkg, matching archdetect.
+# The guard is what drops a march when the flag is missing.
+
+x86_consider() {
+    local chain="$1" path="$2" vendor="$3" need="$4" flags="$5"
+    shift 5
+    local flag
+    if [ "${vendor}x" != "${need}x" ]; then
+        printf '%s\n' "$chain"
+        return 0
+    fi
+    for flag in "$@"; do
+        case " ${flags} " in
+            *" ${flag} "*) ;;
+            *)
+                printf '%s\n' "$chain"
+                return 0
+                ;;
+        esac
+    done
+    printf '%s\n' "${path}:${chain}"
+}
+
+x86_flag_cpupath() {
+    local info="$1"
+    local vendor flags chain family model
+    vendor=$(grep -m1 -i '^vendor_id[[:space:]]*:' "$info" | cut -d: -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    flags=$(grep -m1 -i '^flags[[:space:]]*:' "$info" | cut -d: -f2-)
+    chain="x86_64/generic"
+    chain=$(x86_consider "$chain" "x86_64/intel/haswell" "$vendor" GenuineIntel "$flags" avx2 fma)
+    chain=$(x86_consider "$chain" "x86_64/intel/skylake_avx512" "$vendor" GenuineIntel "$flags" avx2 fma avx512f avx512bw avx512cd avx512dq avx512vl)
+    chain=$(x86_consider "$chain" "x86_64/intel/cascadelake" "$vendor" GenuineIntel "$flags" avx2 fma avx512f avx512bw avx512cd avx512dq avx512vl avx512_vnni)
+    chain=$(x86_consider "$chain" "x86_64/intel/icelake" "$vendor" GenuineIntel "$flags" avx2 fma avx512f avx512bw avx512cd avx512dq avx512vl avx512_vnni avx512_vbmi2)
+    chain=$(x86_consider "$chain" "x86_64/intel/sapphirerapids" "$vendor" GenuineIntel "$flags" avx2 fma avx512f avx512bw avx512cd avx512dq avx512vl avx512_bf16 amx_tile)
+    chain=$(x86_consider "$chain" "x86_64/amd/zen2" "$vendor" AuthenticAMD "$flags" avx2 fma)
+    chain=$(x86_consider "$chain" "x86_64/amd/zen3" "$vendor" AuthenticAMD "$flags" avx2 fma vaes)
+    chain=$(x86_consider "$chain" "x86_64/amd/zen4" "$vendor" AuthenticAMD "$flags" avx2 fma vaes avx512f avx512ifma)
+    chain=$(x86_consider "$chain" "x86_64/amd/zen5" "$vendor" AuthenticAMD "$flags" avx2 fma vaes avx512f avx512ifma avx512_vp2intersect avx_vnni movdiri)
+    # Same model-number upgrade as archdetect. Hidden Granite Rapids
+    # features are not in cpuinfo, so the flag match stops at sapphirerapids.
+    if [ "$chain" != "${chain#x86_64/intel/sapphirerapids:}" ] || [ "$chain" = "x86_64/intel/sapphirerapids" ]; then
+        family=$(grep -m1 -i '^cpu family[[:space:]]*:' "$info" | cut -d: -f2- | tr -d '[:space:]')
+        model=$(grep -m1 -i '^model[[:space:]]*:' "$info" | cut -d: -f2- | tr -d '[:space:]')
+        if [ "$family" = "6" ] && { [ "$model" = "173" ] || [ "$model" = "174" ]; }; then
+            chain="x86_64/intel/graniterapids:${chain}"
+        fi
+    fi
+    printf '%s\n' "$chain"
+}
 
 action=""
 if [ "${1:-}" = "-a" ]; then
@@ -53,7 +104,7 @@ cpupath)
             printf '%s\n' "x86_64/amd/zen5:x86_64/amd/zen4:x86_64/amd/zen3:x86_64/generic"
             ;;
         *)
-            printf '%s\n' "x86_64/generic"
+            x86_flag_cpupath "$cpuinfo"
             ;;
     esac
     ;;

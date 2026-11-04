@@ -160,6 +160,10 @@ class CpuProbe(NamedTuple):
     target: str
     candidates: Tuple[str, ...]
     error: str
+    # Set when the installed directory archdetect would pick needs a flag
+    # this CPU does not have. The reload passes it as
+    # EESSI_SOFTWARE_SUBDIR_OVERRIDE so the EESSI module follows the fallback.
+    override: str = ""
 
 
 class AccelProbe(NamedTuple):
@@ -578,6 +582,66 @@ def _run_bash(args: Sequence[str], env: Mapping[str, str]) -> subprocess.Complet
     )
 
 
+# GCC -march names whose PTA mask includes PTA_WAITPKG (tpause, umwait,
+# umonitor). Leaves use '_' where the march spells '-'. Taken from GCC
+# 15.2.0 gcc/config/i386/i386.h, plus novalake from trunk. archdetect's
+# x86 spec does not require the flag, so a VM that hides it is still
+# offered that directory. A binary built with the march then SIGILLs.
+WAITPKG_MARCHES = frozenset(
+    (
+        "alderlake",
+        "arrowlake",
+        "arrowlake_s",
+        "clearwaterforest",
+        "diamondrapids",
+        "grandridge",
+        "graniterapids",
+        "graniterapids_d",
+        "novalake",
+        "pantherlake",
+        "sapphirerapids",
+        "sierraforest",
+        "tremont",
+    )
+)
+
+_CPUINFO_FLAGS_RE = re.compile(r"(?im)^flags[ \t]*:[ \t]*(.*)$")
+_CPUINFO_READ_MAX = 16 * 1024 * 1024
+
+
+def read_cpu_flags(path: str) -> frozenset:
+    """Intersection of every flags line. One CPU without the flag rejects it."""
+    if not path:
+        return frozenset()
+    try:
+        with open(path, "rb") as handle:
+            blob = handle.read(_CPUINFO_READ_MAX + 1)
+    except OSError:
+        return frozenset()
+    text = blob[:_CPUINFO_READ_MAX].decode("utf-8", "replace")
+    found = []
+    for match in _CPUINFO_FLAGS_RE.finditer(text):
+        found.append(frozenset(match.group(1).split()))
+    if not found:
+        return frozenset()
+    common = found[0]
+    for item in found[1:]:
+        common &= item
+    return common
+
+
+def march_of(candidate: str) -> str:
+    leaf = candidate.rsplit("/", 1)[-1]
+    return leaf.replace("-", "_")
+
+
+def candidate_supports_cpu(candidate: str, flags: frozenset) -> bool:
+    """False when this march implies waitpkg and the CPU flags omit it."""
+    if march_of(candidate) in WAITPKG_MARCHES:
+        return "waitpkg" in flags
+    return True
+
+
 def probe_cpu(env: Mapping[str, str]) -> CpuProbe:
     prefix = env.get("EESSI_PREFIX", "")
     os_type = env.get("EESSI_OS_TYPE", "")
@@ -614,11 +678,25 @@ def probe_cpu(env: Mapping[str, str]) -> CpuProbe:
     for candidate in candidates:
         if not safe_rel_subdir(candidate):
             return CpuProbe("error", "", tuple(candidates), "cpupath returned an unsafe candidate")
-    for candidate in candidates:
-        directory = os.path.join(prefix, "software", os_type, candidate, "software")
-        if os.path.isdir(directory):
-            return CpuProbe("ok", candidate, tuple(candidates), "")
-    return CpuProbe("none", "", tuple(candidates), "")
+    flags = read_cpu_flags(env.get("EESSI_PROC_CPUINFO") or "/proc/cpuinfo")
+    compatible = [item for item in candidates if candidate_supports_cpu(item, flags)]
+
+    def installed(items: Sequence[str]) -> str:
+        for item in items:
+            directory = os.path.join(prefix, "software", os_type, item, "software")
+            if os.path.isdir(directory):
+                return item
+        return ""
+
+    chosen = installed(compatible)
+    # archdetect walks the unfiltered list. When that directory needs a
+    # missing flag, pin the fallback so the reloaded module does not
+    # select the rejected one again.
+    raw = installed(candidates)
+    override = chosen if chosen and chosen != raw else ""
+    if chosen:
+        return CpuProbe("ok", chosen, tuple(compatible), "", override)
+    return CpuProbe("none", "", tuple(compatible), "")
 
 
 def probe_accel(env: Mapping[str, str]) -> AccelProbe:
@@ -992,8 +1070,17 @@ def decide(
             % (now_label, was_label),
         )
 
+    module_env: Mapping[str, str] = env
+    if cpu.override:
+        pinned = dict(env)
+        # A login-node EESSI_ARCHDETECT_OPTIONS would outrank the pin inside
+        # the EESSI module. Drop it for the reload. The module's archdetect
+        # wrapper then exports the single overridden subdirectory.
+        pinned.pop("EESSI_ARCHDETECT_OPTIONS", None)
+        pinned["EESSI_SOFTWARE_SUBDIR_OVERRIDE"] = cpu.override
+        module_env = pinned
     try:
-        result = restore(env, loaded.eessi, loaded.others)
+        result = restore(module_env, loaded.eessi, loaded.others)
     except Exception as exc:
         return _failed(
             was_label,
