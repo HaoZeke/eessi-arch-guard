@@ -554,6 +554,44 @@ class UnitTests:
         assert outcome.kind == "failed"
         assert outcome.changes["EESSI_ARCH_GUARD_FAILED"].endswith("->timeout")
 
+    def test_waitpkg_march_requires_the_flag(self):
+        root = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "cpuinfo"
+        real_path = root / "sapphirerapids-8488C.cpuinfo"
+        kvm_path = root / "sapphirerapids-kvm-no-waitpkg.cpuinfo"
+        real_text = real_path.read_text(encoding="ascii")
+        kvm_text = kvm_path.read_text(encoding="ascii")
+        assert "waitpkg" in real_text.split()
+        assert "waitpkg" not in kvm_text.split()
+        real_flags = guard.read_cpu_flags(str(real_path))
+        kvm_flags = guard.read_cpu_flags(str(kvm_path))
+        assert "waitpkg" in real_flags
+        assert "amx_tile" in kvm_flags
+        assert "avx512_bf16" in kvm_flags
+        assert "waitpkg" not in kvm_flags
+        spr = "x86_64/intel/sapphirerapids"
+        assert guard.candidate_supports_cpu(spr, real_flags)
+        assert not guard.candidate_supports_cpu(spr, kvm_flags)
+        for march in sorted(guard.WAITPKG_MARCHES):
+            path = "x86_64/intel/" + march
+            assert guard.candidate_supports_cpu(path, real_flags), march
+            assert not guard.candidate_supports_cpu(path, kvm_flags), march
+            hyphen = "x86_64/intel/" + march.replace("_", "-")
+            assert not guard.candidate_supports_cpu(hyphen, frozenset()), hyphen
+        assert guard.candidate_supports_cpu("x86_64/amd/zen4", kvm_flags)
+        assert guard.candidate_supports_cpu("x86_64/generic", kvm_flags)
+        mixed = tempfile.NamedTemporaryFile("w", encoding="ascii", delete=False)
+        try:
+            mixed.write("flags : avx2 waitpkg fma\nflags : avx2 fma\n")
+            mixed.close()
+            flags = guard.read_cpu_flags(mixed.name)
+            assert "waitpkg" not in flags
+            assert "fma" in flags
+            assert not guard.candidate_supports_cpu(spr, flags)
+        finally:
+            os.unlink(mixed.name)
+        assert guard.read_cpu_flags("/no/such/eessi-cpuinfo") == frozenset()
+        assert not guard.candidate_supports_cpu(spr, frozenset())
+
     def test_readme_lists_every_flag_and_env_name(self):
         root = Path(__file__).resolve().parents[1]
         source = (root / "src" / "eessi_arch_guard.py").read_text(encoding="utf-8")

@@ -826,6 +826,103 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn(skylake, changes["EESSI_ARCH_GUARD_RELOADED"])
         self.assertIn("accel/nvidia/cc80", changes["EESSI_ARCH_GUARD_RELOADED"])
 
+    def _copy_cpuinfo(self, name):
+        source = Path(__file__).resolve().parent / "fixtures" / "cpuinfo" / name
+        shutil.copy(source, self.site.cpuinfo)
+
+    def _stub_cpupath(self):
+        env = os.environ.copy()
+        env["EESSI_PROC_CPUINFO"] = self.site.cpuinfo
+        script = os.path.join(self.site.init, "eessi_archdetect.sh")
+        proc = subprocess.run(
+            ["bash", script, "-a", "cpupath"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout.strip()
+
+    def test_kvm_sapphirerapids_without_waitpkg_falls_back(self):
+        # The stub still offers sapphirerapids: its flag list matches
+        # archdetect and does not require waitpkg. The guard must not.
+        spr = "x86_64/intel/sapphirerapids"
+        icelake = "x86_64/intel/icelake"
+        self.site.add_cpu(spr)
+        self.site.add_cpu(icelake)
+        self.site.add_module(spr, "R/4.4.2")
+        self.site.add_module(icelake, "R/4.4.2")
+        self._copy_cpuinfo("sapphirerapids-kvm-no-waitpkg.cpuinfo")
+        offered = self._stub_cpupath()
+        self.assertTrue(offered.startswith(spr + ":"), offered)
+        self.assertIn(icelake, offered)
+        env = harness.base_env(self.site, spr, ["R/4.4.2"], gpu="none")
+        proc = harness.run_guard(env)
+        changes, printed = _assert_prolog(proc)
+        self.assertEqual(changes["EESSI_SOFTWARE_SUBDIR"], icelake)
+        self.assertNotEqual(changes["EESSI_SOFTWARE_SUBDIR"], spr)
+        self.assertEqual(changes["EESSI_SOFTWARE_SUBDIR_OVERRIDE"], icelake)
+        self.assertEqual(changes["EESSI_ARCHDETECT_OPTIONS"], icelake)
+        self.assertIn(spr, changes["EESSI_ARCH_GUARD_RELOADED"])
+        self.assertIn(icelake, changes["EESSI_ARCH_GUARD_RELOADED"])
+        self.assertTrue(printed)
+        source = harness.GUARD.read_text(encoding="utf-8")
+        self.assertNotIn(icelake, source)
+
+    def test_kvm_sapphirerapids_falls_back_to_skylake_when_that_tree_exists(self):
+        spr = "x86_64/intel/sapphirerapids"
+        skylake = "x86_64/intel/skylake_avx512"
+        self.site.add_cpu(spr)
+        self.site.add_cpu(skylake)
+        self.site.add_module(skylake, "R/4.4.2")
+        self._copy_cpuinfo("sapphirerapids-kvm-no-waitpkg.cpuinfo")
+        env = harness.base_env(self.site, spr, ["R/4.4.2"], gpu="none")
+        proc = harness.run_guard(env)
+        changes, _printed = _assert_prolog(proc)
+        self.assertEqual(changes["EESSI_SOFTWARE_SUBDIR"], skylake)
+        self.assertEqual(changes["EESSI_SOFTWARE_SUBDIR_OVERRIDE"], skylake)
+        source = harness.GUARD.read_text(encoding="utf-8")
+        self.assertNotIn(skylake, source)
+
+    def test_real_sapphirerapids_keeps_the_target(self):
+        spr = "x86_64/intel/sapphirerapids"
+        self.site.add_cpu(spr)
+        self.site.add_module(spr, "R/4.4.2")
+        self._copy_cpuinfo("sapphirerapids-8488C.cpuinfo")
+        offered = self._stub_cpupath()
+        self.assertTrue(offered.startswith(spr + ":"), offered)
+        self.assertIn("x86_64/intel/icelake:", offered)
+        env = harness.base_env(self.site, spr, ["R/4.4.2"], gpu="none")
+        proc = harness.run_guard(env)
+        _assert_prolog(proc)
+        self.assertEqual(proc.stdout, "")
+
+    def test_graniterapids_without_waitpkg_falls_back(self):
+        spr = "x86_64/intel/sapphirerapids"
+        gnr = "x86_64/intel/graniterapids"
+        icelake = "x86_64/intel/icelake"
+        text = (
+            Path(__file__).resolve().parent
+            / "fixtures"
+            / "cpuinfo"
+            / "sapphirerapids-kvm-no-waitpkg.cpuinfo"
+        ).read_text(encoding="ascii")
+        text = text.replace("model           : 143", "model           : 173", 1)
+        with open(self.site.cpuinfo, "w", encoding="ascii") as handle:
+            handle.write(text)
+        self.site.add_cpu(gnr)
+        self.site.add_cpu(spr)
+        self.site.add_cpu(icelake)
+        self.site.add_module(icelake, "R/4.4.2")
+        offered = self._stub_cpupath()
+        self.assertTrue(offered.startswith(gnr + ":" + spr + ":"), offered)
+        env = harness.base_env(self.site, gnr, ["R/4.4.2"], gpu="none")
+        proc = harness.run_guard(env)
+        changes, _printed = _assert_prolog(proc)
+        self.assertEqual(changes["EESSI_SOFTWARE_SUBDIR"], icelake)
+        self.assertEqual(changes["EESSI_SOFTWARE_SUBDIR_OVERRIDE"], icelake)
+
     def test_help_version_and_shebang(self):
         first = harness.GUARD.read_text(encoding="utf-8").splitlines()[0]
         self.assertEqual(first, "#!/usr/bin/python3 -I")
