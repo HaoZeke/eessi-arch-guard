@@ -605,6 +605,11 @@ class UnitTests:
         missing_names = sorted(name for name in names if name not in readme)
         assert missing_names == []
 
+    def test_license_expression_has_no_license_classifier(self):
+        text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+        assert 'license = "MIT"' in text
+        assert "License :: OSI Approved" not in text
+
     def test_select_first_directory(self):
         root = tempfile.mkdtemp()
         try:
