@@ -6,7 +6,8 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # ubuntu-latest is 26.04, for which setup-python carries no 3.9 build.
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
