@@ -28,7 +28,7 @@ import threading
 import time
 from typing import Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # ns-043 cache contract. EESSI_ARCH_GUARD is absent on purpose.
 KEY_FIELDS = (
