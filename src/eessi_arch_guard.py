@@ -583,10 +583,12 @@ def _run_bash(args: Sequence[str], env: Mapping[str, str]) -> subprocess.Complet
 
 
 # GCC -march names whose PTA mask includes PTA_WAITPKG (tpause, umwait,
-# umonitor). Leaves use '_' where the march spells '-'. Taken from GCC
-# 15.2.0 gcc/config/i386/i386.h, plus novalake from trunk. archdetect's
-# x86 spec does not require the flag, so a VM that hides it is still
-# offered that directory. A binary built with the march then SIGILLs.
+# umonitor). Leaves use '_' where the march spells '-'. Taken from GCC 16
+# gcc/config/i386/i386.h (branch releases/gcc-16): the set GCC 15.2.0
+# carried plus novalake; znver6, GCC 16's other new mask, has no WAITPKG.
+# archdetect's x86 spec does not require the flag, so a VM that hides it
+# is still offered that directory. A binary built with the march then
+# SIGILLs.
 WAITPKG_MARCHES = frozenset(
     (
         "alderlake",
