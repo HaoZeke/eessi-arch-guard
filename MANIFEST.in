@@ -1,5 +1,8 @@
 include CHANGELOG.md
 include DESIGN.md
 graft tests
+graft docs
+prune docs/_build
+prune docs/examples/_work
 global-exclude __pycache__
 global-exclude *.py[cod]

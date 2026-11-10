@@ -1,7 +1,8 @@
 #!/usr/bin/python3 -I
 """Reload EESSI modules when a Slurm task lands on another CPU or GPU target.
 
-The TaskProlog target is this file. See DESIGN.md for what it refuses to do.
+The TaskProlog target is this file. See DESIGN.md for the design record.
+The documentation is under docs/.
 Output is either Slurm TaskProlog lines (export, unset, print) or, with
 --shell, bash assignments for eval. The process exits 0 unless a chained
 site prolog exits non-zero: a non-zero status from this program would kill
@@ -149,6 +150,11 @@ so a site sets this in a wrapper or in a root-owned eessi-arch-guard.conf.
 
 
 class Outcome(NamedTuple):
+    """Environment delta, optional message, kind, and optional detail.
+
+    ``kind`` is ``skip``, ``noop``, ``reloaded``, or ``failed``.
+    """
+
     changes: Dict[str, Optional[str]]
     message: Optional[str]
     kind: str
@@ -156,6 +162,12 @@ class Outcome(NamedTuple):
 
 
 class CpuProbe(NamedTuple):
+    """CPU walk result.
+
+    ``status`` is ``ok``, ``none``, or ``error``. ``override`` is the
+    installed directory when it differs from the unfiltered archdetect choice.
+    """
+
     status: str  # ok, none, error
     target: str
     candidates: Tuple[str, ...]
@@ -167,18 +179,24 @@ class CpuProbe(NamedTuple):
 
 
 class AccelProbe(NamedTuple):
+    """Accelerator probe. ``status`` is ``ok``, ``none``, or ``error``."""
+
     status: str  # ok, none, error
     subdir: str
     error: str
 
 
 class LoadedModules(NamedTuple):
+    """The one ``EESSI/<version>`` name, the other loaded names, and an error token."""
+
     eessi: str
     others: Tuple[str, ...]
     error: str
 
 
 class RestoreResult(NamedTuple):
+    """Helper result: success flag, restored environment, missing modules, error text."""
+
     ok: bool
     env: Optional[Dict[str, str]]
     missing: Tuple[str, ...]
@@ -200,6 +218,7 @@ def one_line(text: str, limit: int = 500) -> str:
 
 
 def module_name_ok(name: str) -> bool:
+    """True when ``name`` matches the module grammar and is at most 256 characters."""
     return (
         isinstance(name, str)
         and 0 < len(name) <= MAX_MODULE_NAME
@@ -645,6 +664,7 @@ def candidate_supports_cpu(candidate: str, flags: frozenset) -> bool:
 
 
 def probe_cpu(env: Mapping[str, str]) -> CpuProbe:
+    """Select the first installed cpupath candidate that satisfies the waitpkg rule."""
     prefix = env.get("EESSI_PREFIX", "")
     os_type = env.get("EESSI_OS_TYPE", "")
     init = env.get("EESSI_INIT_PREFIX", "")
@@ -702,6 +722,7 @@ def probe_cpu(env: Mapping[str, str]) -> CpuProbe:
 
 
 def probe_accel(env: Mapping[str, str]) -> AccelProbe:
+    """Return accelpath stdout, or status ``none`` when the script reports no GPU."""
     init = env.get("EESSI_INIT_PREFIX", "")
     if not safe_absolute(init):
         return AccelProbe("error", "", "EESSI_INIT_PREFIX is missing or unsafe")
@@ -839,6 +860,7 @@ def _wire_map(mapping: Mapping[str, str]) -> Dict[str, str]:
 
 
 def do_restore(payload: Mapping[str, object]) -> Dict[str, object]:
+    """Purge and reload from a JSON request. The return value is the JSON object."""
     env = payload.get("env")
     eessi = payload.get("eessi")
     modules = payload.get("modules")
@@ -995,6 +1017,7 @@ def decide(
     accel_probe=probe_accel,
     restore=call_restore,
 ) -> Outcome:
+    """Compare the loaded target with this node and build the environment delta."""
     if _ACTIVE is not None:
         _ACTIVE.check()
     if env.get("EESSI_ARCH_GUARD") == "0":
@@ -1166,6 +1189,7 @@ def cache_directory(env: Mapping[str, str]) -> Optional[str]:
 
 
 def cache_file_path(env: Mapping[str, str]) -> Optional[str]:
+    """Cache path for this uid, node, job, and step. None when the job id is unset."""
     job = env.get("SLURM_JOB_ID", "")
     if not job:
         return None
@@ -1545,6 +1569,8 @@ def run_chain(path: str, env: Mapping[str, str]) -> Tuple[int, bytes, bytes]:
 
 
 class Args(NamedTuple):
+    """Parsed argv: shell, restore, help, version, chain, and timeout text."""
+
     shell: bool
     restore: bool
     help: bool
@@ -1554,6 +1580,7 @@ class Args(NamedTuple):
 
 
 def parse_args(argv: Sequence[str]) -> Args:
+    """Parse the prolog argv. Flags other than the documented ones are skipped."""
     shell = restore = help_ = version = False
     chain = None
     timeout = None
@@ -1673,6 +1700,7 @@ def _main(argv: Sequence[str]) -> int:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Run the guard. Exit 0 unless a chained prolog exits non-zero."""
     if argv is None:
         argv = sys.argv[1:]
     try:

@@ -24,3 +24,33 @@ jobs:
           ruff check src tests
       - name: test
         run: python -m unittest discover -s tests -v
+
+  docs:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: build documentation
+        run: |
+          python -m pip install -r docs/requirements.txt
+          make -C docs html
+      - name: run documentation examples
+        run: |
+          python docs/examples/walkthrough.py mismatch
+          python docs/examples/walkthrough.py again
+          python docs/examples/walkthrough.py clean
+          python docs/examples/failure_cases.py no-software-dir
+          python docs/examples/failure_cases.py ignore-missing
+          python docs/examples/failure_cases.py missing-module
+          python docs/examples/failure_cases.py opt-out
+          python docs/examples/failure_cases.py archdetect
+          python docs/examples/failure_cases.py lmod
+          python docs/examples/failure_cases.py verbose
+          python docs/examples/failure_cases.py bad-timeout
+          python docs/examples/shell_demo.py
+          python docs/examples/accelerator.py mismatch
+          python docs/examples/accelerator.py missing-module
+          bash docs/examples/check_install.sh
+          bash docs/examples/check_config.sh

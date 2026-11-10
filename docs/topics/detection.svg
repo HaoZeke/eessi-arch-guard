@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="620" viewBox="0 0 980 620">
+  <rect width="980" height="620" fill="#ffffff"/>
+  <style>
+    .cpu { fill: #f4f7fb; stroke: #1f4e79; stroke-width: 1.6; }
+    .gpu { fill: #f8f4fb; stroke: #5b3a7a; stroke-width: 1.6; }
+    .pin { fill: #fff6e8; stroke: #8a5a00; stroke-width: 1.6; }
+    .title { font: 600 16px "DejaVu Sans", "Liberation Sans", sans-serif; fill: #1a1a1a; }
+    .body { font: 14px "DejaVu Sans", "Liberation Sans", sans-serif; fill: #1a1a1a; }
+  </style>
+  <rect class="cpu" x="24" y="20" width="460" height="430" rx="8"/>
+  <text class="title" x="44" y="50">CPU walk</text>
+  <text class="body" x="44" y="82">1. eessi_archdetect.sh -a cpupath</text>
+  <text class="body" x="64" y="104">One line. Candidates are separated by colons.</text>
+  <text class="body" x="44" y="140">2. Drop a waitpkg march</text>
+  <text class="body" x="64" y="162">when the flag is missing from the</text>
+  <text class="body" x="64" y="184">intersection of every flags line.</text>
+  <text class="body" x="44" y="220">3. Walk what remains</text>
+  <text class="body" x="64" y="242">Keep the first candidate whose</text>
+  <text class="body" x="64" y="264">software directory exists:</text>
+  <text class="body" x="64" y="286">prefix/software/os/candidate/software</text>
+  <text class="body" x="44" y="322">4. Compare with the loaded value</text>
+  <text class="body" x="64" y="344">EESSI_SOFTWARE_SUBDIR equal to that</text>
+  <text class="body" x="64" y="366">directory means the CPU matches.</text>
+  <text class="body" x="44" y="402">A cpupath error stops the decision.</text>
+  <text class="body" x="44" y="424">No installed directory is a loud failure.</text>
+  <rect class="gpu" x="504" y="20" width="452" height="300" rx="8"/>
+  <text class="title" x="524" y="50">Accelerator</text>
+  <text class="body" x="524" y="82">1. eessi_archdetect.sh accelpath</text>
+  <text class="body" x="524" y="118">2. A non-zero status, or empty stdout,</text>
+  <text class="body" x="544" y="140">means no accelerator.</text>
+  <text class="body" x="524" y="176">3. Stdout must be one subdirectory:</text>
+  <text class="body" x="544" y="198">accel/nvidia/ccN or accel/amd/gfx...</text>
+  <text class="body" x="524" y="234">4. Compare that string with</text>
+  <text class="body" x="544" y="256">EESSI_ACCEL_SUBDIR.</text>
+  <text class="body" x="524" y="292">Anything else on stdout is a failure.</text>
+  <rect class="pin" x="504" y="340" width="452" height="180" rx="8"/>
+  <text class="title" x="524" y="370">Waitpkg fallback</text>
+  <text class="body" x="524" y="402">When the installed directory on the</text>
+  <text class="body" x="524" y="424">unfiltered list needs a missing flag,</text>
+  <text class="body" x="524" y="446">the reload sets</text>
+  <text class="body" x="524" y="468">EESSI_SOFTWARE_SUBDIR_OVERRIDE</text>
+  <text class="body" x="524" y="490">and drops EESSI_ARCHDETECT_OPTIONS.</text>
+</svg>

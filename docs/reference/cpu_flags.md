@@ -1,0 +1,29 @@
+# CPU flags
+
+archdetect's x86 spec (`eessi_arch_x86.spec`) requires the flags that separate one EESSI target from the previous one. GCC `-march` for that same target enables a larger set. A flag in the march set and absent from the spec is unchecked: a CPU can miss it and still be given that directory. The guard adds one check on top of that spec, `waitpkg`, for the marches in [Detection and matching](../topics/detection.md). Every other name below stays unchecked.
+
+The names are `/proc/cpuinfo` flags. Where the spelling differs, `pni` is SSE3, `abm` is LZCNT, `bmi1` is BMI, `pclmulqdq` is PCLMUL, `rdrand` is RDRND, `3dnowprefetch` is PREFETCHW, and `sha_ni` is SHA. `avx512vbmi` and `avx512ifma` have no underscore. `PTA_64BIT`, `PTA_NO_SAHF`, and `PTA_EVEX512` are compiler-internal and have no cpuinfo flag, so this page leaves them out. The lists are GCC 15.2.0 `gcc/config/i386/i386.h`. Trunk's `graniterapids` also adds `PTA_AVX10_1` (`avx10_1`). This page leaves that flag out. archdetect leaves it unchecked. `novalake` is in the guard's waitpkg set and has no march list here.
+
+`icelake` is compared with `-march=icelake-server`. `graniterapids` shares the Sapphire Rapids spec flags: archdetect upgrades a Sapphire Rapids flag match when the CPU is family 6 model 173 or 174. `graniterapids-d` has no archdetect spec line; its extra flag over `graniterapids` is `amx_complex`. `alderlake`, `tremont`, `sierraforest`, `grandridge`, `arrowlake`, `arrowlake-s`, `clearwaterforest`, `pantherlake`, `diamondrapids`, and `novalake` have no spec line. archdetect selects them only when a candidate string already names them. The guard still requires `waitpkg` on that leaf and leaves the rest of the march unchecked.
+
+haswell (`-march=haswell`; spec `avx2 fma`): abm, avx, bmi1, bmi2, cx16, f16c, fsgsbase, fxsr, hle, mmx, movbe, pclmulqdq, pni, popcnt, rdrand, sse, sse2, sse4_1, sse4_2, ssse3, xsave, xsaveopt.
+
+skylake_avx512 (`-march=skylake-avx512`; spec `avx2 fma avx512f avx512bw avx512cd avx512dq avx512vl`): 3dnowprefetch, abm, adx, aes, avx, bmi1, bmi2, clflushopt, clwb, cx16, f16c, fsgsbase, fxsr, hle, mmx, movbe, pclmulqdq, pku, pni, popcnt, rdrand, rdseed, sgx, sse, sse2, sse4_1, sse4_2, ssse3, xsave, xsavec, xsaveopt, xsaves.
+
+cascadelake (`-march=cascadelake`; spec adds `avx512_vnni`): 3dnowprefetch, abm, adx, aes, avx, bmi1, bmi2, clflushopt, clwb, cx16, f16c, fsgsbase, fxsr, hle, mmx, movbe, pclmulqdq, pku, pni, popcnt, rdrand, rdseed, sgx, sse, sse2, sse4_1, sse4_2, ssse3, xsave, xsavec, xsaveopt, xsaves.
+
+icelake (`-march=icelake-server`; spec adds `avx512_vbmi2`): 3dnowprefetch, abm, adx, aes, avx, avx512_bitalg, avx512_vpopcntdq, avx512ifma, avx512vbmi, bmi1, bmi2, clflushopt, clwb, cx16, f16c, fsgsbase, fxsr, gfni, hle, mmx, movbe, pclmulqdq, pconfig, pku, pni, popcnt, rdpid, rdrand, rdseed, sgx, sha_ni, sse, sse2, sse4_1, sse4_2, ssse3, vaes, vpclmulqdq, wbnoinvd, xsave, xsavec, xsaveopt, xsaves.
+
+sapphirerapids (`-march=sapphirerapids`; spec `avx2 fma avx512f avx512bw avx512cd avx512dq avx512vl avx512_bf16 amx_tile`): 3dnowprefetch, abm, adx, aes, amx_bf16, amx_int8, avx, avx512_bitalg, avx512_fp16, avx512_vbmi2, avx512_vnni, avx512_vpopcntdq, avx512ifma, avx512vbmi, avx_vnni, bmi1, bmi2, cldemote, clflushopt, clwb, cx16, enqcmd, f16c, fsgsbase, fxsr, gfni, hle, mmx, movbe, movdir64b, movdiri, pclmulqdq, pconfig, pku, pni, popcnt, ptwrite, rdpid, rdrand, rdseed, serialize, sgx, sha_ni, sse, sse2, sse4_1, sse4_2, ssse3, tsxldtrk, uintr, vaes, vpclmulqdq, waitpkg, wbnoinvd, xsave, xsavec, xsaveopt, xsaves.
+
+graniterapids (`-march=graniterapids`; same spec flags as sapphirerapids): 3dnowprefetch, abm, adx, aes, amx_bf16, amx_fp16, amx_int8, avx, avx512_bitalg, avx512_fp16, avx512_vbmi2, avx512_vnni, avx512_vpopcntdq, avx512ifma, avx512vbmi, avx_vnni, bmi1, bmi2, cldemote, clflushopt, clwb, cx16, enqcmd, f16c, fsgsbase, fxsr, gfni, hle, mmx, movbe, movdir64b, movdiri, pclmulqdq, pconfig, pku, pni, popcnt, prefetchi, ptwrite, rdpid, rdrand, rdseed, serialize, sgx, sha_ni, sse, sse2, sse4_1, sse4_2, ssse3, tsxldtrk, uintr, vaes, vpclmulqdq, waitpkg, wbnoinvd, xsave, xsavec, xsaveopt, xsaves.
+
+graniterapids-d (`-march=graniterapids-d`; no spec line): the graniterapids list, plus amx_complex.
+
+zen2 (`-march=znver2`; spec `avx2 fma`): 3dnowprefetch, abm, adx, aes, avx, bmi1, bmi2, clflushopt, clwb, clzero, cx16, f16c, fsgsbase, fxsr, mmx, movbe, mwaitx, pclmulqdq, pni, popcnt, rdpid, rdrand, rdseed, sha_ni, sse, sse2, sse4_1, sse4_2, sse4a, ssse3, wbnoinvd, xsave, xsavec, xsaveopt, xsaves.
+
+zen3 (`-march=znver3`; spec adds `vaes`): 3dnowprefetch, abm, adx, aes, avx, bmi1, bmi2, clflushopt, clwb, clzero, cx16, f16c, fsgsbase, fxsr, mmx, movbe, mwaitx, pclmulqdq, pku, pni, popcnt, rdpid, rdrand, rdseed, sha_ni, sse, sse2, sse4_1, sse4_2, sse4a, ssse3, vpclmulqdq, wbnoinvd, xsave, xsavec, xsaveopt, xsaves.
+
+zen4 (`-march=znver4`; spec adds `avx512f avx512ifma`): 3dnowprefetch, abm, adx, aes, avx, avx512_bf16, avx512_bitalg, avx512_vbmi2, avx512_vnni, avx512_vpopcntdq, avx512bw, avx512cd, avx512dq, avx512vbmi, avx512vl, bmi1, bmi2, clflushopt, clwb, clzero, cx16, f16c, fsgsbase, fxsr, gfni, mmx, movbe, mwaitx, pclmulqdq, pku, pni, popcnt, rdpid, rdrand, rdseed, sha_ni, sse, sse2, sse4_1, sse4_2, sse4a, ssse3, vpclmulqdq, wbnoinvd, xsave, xsavec, xsaveopt, xsaves.
+
+zen5 (`-march=znver5`; spec adds `avx512_vp2intersect avx_vnni movdiri`): 3dnowprefetch, abm, adx, aes, avx, avx512_bf16, avx512_bitalg, avx512_vbmi2, avx512_vnni, avx512_vpopcntdq, avx512bw, avx512cd, avx512dq, avx512vbmi, avx512vl, bmi1, bmi2, clflushopt, clwb, clzero, cx16, f16c, fsgsbase, fxsr, gfni, mmx, movbe, movdir64b, mwaitx, pclmulqdq, pku, pni, popcnt, prefetchi, rdpid, rdrand, rdseed, sha_ni, sse, sse2, sse4_1, sse4_2, sse4a, ssse3, vpclmulqdq, wbnoinvd, xsave, xsavec, xsaveopt, xsaves.

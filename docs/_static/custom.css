@@ -1,0 +1,6 @@
+article figure img,
+article figure svg {
+  max-width: 100%;
+  height: auto;
+  background: #fff;
+}

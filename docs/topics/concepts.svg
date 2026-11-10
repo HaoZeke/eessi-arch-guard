@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="760" viewBox="0 0 980 760">
+  <rect width="980" height="760" fill="#ffffff"/>
+  <style>
+    .host { fill: #f4f7fb; stroke: #1f4e79; stroke-width: 1.6; }
+    .prolog { fill: #f4f7fb; stroke: #1f4e79; stroke-width: 1.6; }
+    .match { fill: #eef6ee; stroke: #1e6b3a; stroke-width: 1.6; }
+    .diff { fill: #fff6e8; stroke: #8a5a00; stroke-width: 1.6; }
+    .foot { fill: #f7f7f7; stroke: #666666; stroke-width: 1; }
+    .title { font: 600 16px "DejaVu Sans", "Liberation Sans", sans-serif; fill: #1a1a1a; }
+    .body { font: 14px "DejaVu Sans", "Liberation Sans", sans-serif; fill: #1a1a1a; }
+    .label { font: 600 13px "DejaVu Sans", "Liberation Sans", sans-serif; fill: #1f4e79; }
+  </style>
+  <rect class="host" x="36" y="20" width="908" height="128" rx="8"/>
+  <text class="title" x="56" y="48">Submit host</text>
+  <text class="body" x="56" y="76">module load EESSI/version runs eessi_archdetect.sh once.</text>
+  <text class="body" x="56" y="98">The module records EESSI_SOFTWARE_SUBDIR, EESSI_ACCEL_SUBDIR,</text>
+  <text class="body" x="56" y="120">MODULEPATH, and the EBROOT* paths of every loaded module.</text>
+  <line x1="490" y1="148" x2="490" y2="176" stroke="#1f4e79" stroke-width="2"/>
+  <polygon points="484,176 496,176 490,186" fill="#1f4e79"/>
+  <text class="label" x="504" y="174">Slurm copies that environment into the task</text>
+  <rect class="prolog" x="36" y="196" width="908" height="150" rx="8"/>
+  <text class="title" x="56" y="224">TaskProlog on the compute node</text>
+  <text class="body" x="56" y="252">CPU: eessi_archdetect.sh -a cpupath, then the first installed candidate</text>
+  <text class="body" x="56" y="274">whose march still has waitpkg when that march requires the flag.</text>
+  <text class="body" x="56" y="296">Accelerator: eessi_archdetect.sh accelpath, compared with</text>
+  <text class="body" x="56" y="318">EESSI_ACCEL_SUBDIR. A non-zero accelpath means no accelerator.</text>
+  <line x1="250" y1="346" x2="250" y2="374" stroke="#1e6b3a" stroke-width="2"/>
+  <polygon points="244,374 256,374 250,384" fill="#1e6b3a"/>
+  <line x1="730" y1="346" x2="730" y2="374" stroke="#8a5a00" stroke-width="2"/>
+  <polygon points="724,374 736,374 730,384" fill="#8a5a00"/>
+  <rect class="match" x="36" y="392" width="430" height="210" rx="8"/>
+  <text class="title" x="56" y="422">Targets match</text>
+  <text class="body" x="56" y="452">The CPU directory and the accelerator</text>
+  <text class="body" x="56" y="474">string are the ones already loaded.</text>
+  <text class="body" x="56" y="506">The prolog prints no export lines.</text>
+  <text class="body" x="56" y="538">The process exits 0.</text>
+  <rect class="diff" x="514" y="392" width="430" height="250" rx="8"/>
+  <text class="title" x="534" y="422">Targets differ</text>
+  <text class="body" x="534" y="450">python3 -I -X utf8 file --restore</text>
+  <text class="body" x="534" y="472">module --force purge</text>
+  <text class="body" x="534" y="494">module load EESSI/version</text>
+  <text class="body" x="534" y="516">module load of the other names, in order</text>
+  <text class="body" x="534" y="548">The prolog prints export and unset lines.</text>
+  <text class="body" x="534" y="570">slurmstepd applies them, then execve.</text>
+  <rect class="foot" x="36" y="668" width="908" height="64" rx="8"/>
+  <text class="body" x="56" y="696">A chained prolog that exits non-zero becomes the TaskProlog status.</text>
+  <text class="body" x="56" y="718">Every other path exits 0. A loud failure still lets the task start.</text>
+</svg>
