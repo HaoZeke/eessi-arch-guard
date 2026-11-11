@@ -62,7 +62,8 @@ class YearModuleTests(unittest.TestCase):
             core.mkdir(parents=True)
             (core / "2025.06.lua").write_text(
                 'local prefix = os.getenv("EESSI_PREFIX")\n'
-                'local line = capture("bash --noprofile --norc " .. os.getenv("EESSI_INIT_PREFIX")\n'
+                'local line = capture("bash --noprofile --norc " .. '
+                'os.getenv("EESSI_INIT_PREFIX")\n'
                 '  .. "/eessi_archdetect.sh -a cpupath")\n'
                 "local chosen = nil\n"
                 'for path in string.gmatch(line, "[^:%s]+") do\n'
