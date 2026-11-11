@@ -7,6 +7,7 @@ Procedures for a user who sees a guard message, and for an admin installing the 
 
 read_failure
 shell_batch
+user_task_prolog
 install_prolog
 configure
 ```
