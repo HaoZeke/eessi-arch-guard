@@ -50,7 +50,7 @@ A loaded name has to match:
 ^[A-Za-z0-9_][A-Za-z0-9._+-]*(/[A-Za-z0-9_][A-Za-z0-9._+-]*)+$
 ```
 
-and be at most 256 characters. The EESSI entry has to match `^EESSI/<segment>$` and appear once. Anything else is `->unsafe-module-name` (a name that fails the grammar) or `->restore-failed` (the list has no single `EESSI/<version>` entry). The restore does not start.
+or be a four-digit ASCII year alias such as `2026`, and be at most 256 characters. Ordinary unversioned package names remain rejected. The EESSI entry has to match `^EESSI/<segment>$` and appear once. Anything else is `->unsafe-module-name` (a name that fails the grammar) or `->restore-failed` (the list has no single `EESSI/<version>` entry). The restore does not start.
 
 Prolog names match `^[A-Za-z_][A-Za-z0-9_]*$`.
 

@@ -94,6 +94,7 @@ SOFT_DROP = frozenset({"PS1", "PS2", "PS3", "PROMPT_COMMAND"})
 
 _MOD_SEGMENT = r"[A-Za-z0-9_][A-Za-z0-9._+-]*"
 MODULE_NAME_RE = re.compile(rf"^{_MOD_SEGMENT}(?:/{_MOD_SEGMENT})+$")
+YEAR_MODULE_RE = re.compile(r"^[0-9]{4}$")
 EESSI_MODULE_RE = re.compile(rf"^EESSI/{_MOD_SEGMENT}$")
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ACCEL_RE = re.compile(r"^accel/(?:nvidia/cc[0-9]+|amd/gfx[0-9a-f]+)$")
@@ -224,7 +225,7 @@ def module_name_ok(name: str) -> bool:
     return (
         isinstance(name, str)
         and 0 < len(name) <= MAX_MODULE_NAME
-        and MODULE_NAME_RE.fullmatch(name) is not None
+        and (MODULE_NAME_RE.fullmatch(name) is not None or YEAR_MODULE_RE.fullmatch(name) is not None)
     )
 
 
