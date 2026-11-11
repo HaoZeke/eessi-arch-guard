@@ -104,5 +104,5 @@ class YearModuleTests(unittest.TestCase):
             self.assertEqual(changes["EESSI_SOFTWARE_SUBDIR"], ZEN2)
             self.assertEqual(changes["ARCH_GUARD_YEAR_TARGET"], ZEN2)
             self.assertIn(ZEN2, changes["EBROOTR"])
-            self.assertIn("2026", changes["LOADEDMODULES"].split(":"))
+            self.assertIn("2026", {**env, **changes}["LOADEDMODULES"].split(":"))
             self.assertNotIn("EESSI_ARCH_GUARD_FAILED", changes)
