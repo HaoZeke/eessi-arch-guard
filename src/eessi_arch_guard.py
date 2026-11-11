@@ -4,9 +4,9 @@
 The TaskProlog target is this file. See DESIGN.md for the design record.
 The documentation is under docs/.
 Output is either Slurm TaskProlog lines (export, unset, print) or, with
---shell, bash assignments for eval. The process exits 0 unless a chained
-site prolog exits non-zero: a non-zero status from this program would kill
-the task.
+--shell, bash assignments for eval. Default TaskProlog mode exits 0 unless
+a chained site prolog exits non-zero. Opt-in --strict returns 78 for failed
+decisions and unexpected exceptions. A non-zero status cancels the task.
 """
 
 from __future__ import annotations
