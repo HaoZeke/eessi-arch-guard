@@ -139,7 +139,8 @@ def _seconds_label(value: float) -> str:
 
 
 HELP = """\
-usage: eessi-arch-guard [--shell] [--strict] [--chain PATH] [--timeout SEC] [--restore] [-h|--help] [--version]
+usage: eessi-arch-guard [--shell] [--strict] [--chain PATH] [--timeout SEC]
+                        [--restore] [-h|--help] [--version]
 
 Slurm TaskProlog: when the loaded EESSI CPU or accelerator target is not this
 node's, print export/unset lines for the reloaded module environment.
@@ -226,7 +227,9 @@ def module_name_ok(name: str) -> bool:
     return (
         isinstance(name, str)
         and 0 < len(name) <= MAX_MODULE_NAME
-        and (MODULE_NAME_RE.fullmatch(name) is not None or YEAR_MODULE_RE.fullmatch(name) is not None)
+        and (
+            MODULE_NAME_RE.fullmatch(name) is not None or YEAR_MODULE_RE.fullmatch(name) is not None
+        )
     )
 
 

@@ -1,11 +1,12 @@
 """Private configured restore workspaces for strict job guards."""
+
 import json
 import os
-from pathlib import Path
 import sys
 import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -71,7 +72,9 @@ class WorkspaceTests(unittest.TestCase):
                 self.assertIn("--strict", argv)
                 observed.append(work)
                 data = {"ok": True, "env": guard._wire_map({"RESULT": "restored"}), "missing": []}
-                return types.SimpleNamespace(returncode=0, stdout=json.dumps(data).encode(), stderr=b"")
+                return types.SimpleNamespace(
+                    returncode=0, stdout=json.dumps(data).encode(), stderr=b""
+                )
 
             with mock.patch.object(guard, "run_captured", side_effect=helper):
                 result = guard.call_restore({"TMPDIR": root}, "EESSI/2026.06", ["2026"])
@@ -82,9 +85,13 @@ class WorkspaceTests(unittest.TestCase):
             self.assertTrue(Path(root).is_dir())
 
     def test_strict_call_does_not_leak_policy_into_default_calls(self):
-        with mock.patch.object(guard, "site_config", return_value=({}, None)), mock.patch.object(
-            guard, "limited_decide", return_value=guard.Outcome({}, None, "noop")
-        ), mock.patch.object(guard, "write_fd"):
+        with (
+            mock.patch.object(guard, "site_config", return_value=({}, None)),
+            mock.patch.object(
+                guard, "limited_decide", return_value=guard.Outcome({}, None, "noop")
+            ),
+            mock.patch.object(guard, "write_fd"),
+        ):
             self.assertFalse(guard._STRICT_MODE)
             self.assertEqual(guard.main(["--strict"]), 0)
             self.assertFalse(guard._STRICT_MODE)
