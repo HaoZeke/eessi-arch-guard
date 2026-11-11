@@ -19,7 +19,7 @@
 | `SLURM_JOB_ID` | Required for the cache file. Unset means every task computes its own result. |
 | `SLURM_STEP_ID` | Cache component. Unset is stored as `batch`. |
 | `SLURM_LOCALID` | `0` or unset receives the `print` line. |
-| `TMPDIR` | Cache directory when it is absolute and exists. Omitted from the delta. |
+| `TMPDIR` | Cache directory when it is absolute and exists. In strict mode it must be private and owned by the invoking user, or an existing configured private state directory is selected. Omitted from the delta. |
 
 ## Controls
 
@@ -31,7 +31,7 @@
 | `EESSI_SOFTWARE_SUBDIR_OVERRIDE` | Set on entry: skip detection. Set by a waitpkg fallback during the reload. |
 | `EESSI_ARCHDETECT_OPTIONS_OVERRIDE` | Set on entry: skip detection. |
 | `EESSI_ACCELERATOR_TARGET_OVERRIDE` | Skip the accelerator comparison. The CPU walk still runs. |
-| `EESSI_ARCH_GUARD_WORKDIR` | Directory for the helper's temporary files. The parent sets it and removes it. |
+| `EESSI_ARCH_GUARD_WORKDIR` | Existing private directory owned by the invoking user for restore temporaries. The parent creates a private child and removes that child. The configured base is never created or chmodded. |
 
 ## Written by the guard
 
@@ -62,4 +62,6 @@ Prolog names match `^[A-Za-z_][A-Za-z0-9_]*$`.
 
 ## Helper process environment
 
-`PATH=/usr/bin:/bin`, `HOME=/tmp`, `LANG=C`, `LC_ALL=C`, `TMPDIR=/tmp`, and `EESSI_ARCH_GUARD_WORKDIR` set to a fresh directory under `/tmp`. The task environment travels in the JSON body.
+`PATH=/usr/bin:/bin`, `LANG=C`, `LC_ALL=C`, and `HOME`, `TMPDIR` and `EESSI_ARCH_GUARD_WORKDIR` naming the fresh private helper directory. The task environment travels in the JSON body.
+
+The configured work directory takes priority over `TMPDIR`. Strict mode accepts only an existing private owned directory, with fallback to an existing `eessi-arch-guard` directory below `XDG_STATE_HOME` or `HOME/.local/state`. It refuses when none is available; it does not create those base directories or use the system temporary fallback. Default TaskProlog mode retains the standard temporary-directory fallback when the scheduler has not created `TMPDIR`.

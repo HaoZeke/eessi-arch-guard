@@ -114,6 +114,7 @@ PROLOG_LINE_MAX = 4094
 # covers the whole decision.
 DEFAULT_TIMEOUT = 60.0
 STRICT_FAILURE_EXIT = 78
+_STRICT_MODE = False
 TIMEOUT_MAX = threading.TIMEOUT_MAX
 # flock has no timeout and Python retries EINTR, so the wait is a
 # non-blocking loop. 0.05 s still ends a 1 s deadline in one shot, and a
@@ -778,12 +779,52 @@ def _parse_env0(blob: bytes) -> Dict[str, str]:
     return parsed
 
 
+def _private_directory(path: str) -> Optional[str]:
+    """Return an existing private directory owned by the invoking user."""
+    if not safe_absolute(path):
+        return None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            return None
+        return os.path.realpath(path)
+    finally:
+        os.close(fd)
+
+
+def restore_work_base(env: Mapping[str, str]) -> str:
+    """Select the configured workspace without creating or widening its base."""
+    explicit = env.get("EESSI_ARCH_GUARD_WORKDIR", "")
+    if explicit:
+        selected = _private_directory(explicit)
+        if selected is None:
+            raise ValueError("EESSI_ARCH_GUARD_WORKDIR is not an existing private owned directory")
+        return selected
+    temporary = env.get("TMPDIR", "")
+    selected = _private_directory(temporary)
+    if selected is not None:
+        return selected
+    if _STRICT_MODE:
+        state = env.get("XDG_STATE_HOME", "")
+        if not state:
+            state = os.path.join(env.get("HOME", ""), ".local", "state")
+        selected = _private_directory(os.path.join(state, "eessi-arch-guard"))
+        if selected is not None:
+            return selected
+        raise ValueError("strict mode needs an existing private job or state workspace")
+    if safe_absolute(temporary) and os.path.isdir(temporary):
+        return temporary
+    return tempfile.gettempdir()
+
+
 def source_exports(
     module_env: Mapping[str, str], script: bytes
 ) -> Tuple[Optional[Dict[str, str]], str]:
-    base = os.environ.get("EESSI_ARCH_GUARD_WORKDIR", "/tmp")
-    if not (safe_absolute(base) and os.path.isdir(base)):
-        base = "/tmp"
+    base = restore_work_base(os.environ)
     tmp = tempfile.mkdtemp(prefix="eessi-arch-guard-", dir=base)
     try:
         os.chmod(tmp, 0o700)
@@ -930,19 +971,25 @@ def call_restore(
         "modules": [to_wire(name) for name in modules],
         "lmod": to_wire(env.get("LMOD_CMD", "")),
     }
-    work = tempfile.mkdtemp(prefix="eessi-arch-guard-", dir="/tmp")
+    try:
+        work = tempfile.mkdtemp(prefix="eessi-arch-guard-", dir=restore_work_base(env))
+    except (OSError, ValueError) as exc:
+        return RestoreResult(False, None, (), "restore workspace unavailable: %s" % exc)
     clean = {
         "PATH": "/usr/bin:/bin",
         "LC_ALL": "C",
         "LANG": "C",
-        "HOME": "/tmp",
-        "TMPDIR": "/tmp",
+        "HOME": work,
+        "TMPDIR": work,
         "EESSI_ARCH_GUARD_WORKDIR": work,
     }
+    helper_args = [sys.executable, "-I", "-X", "utf8", os.path.abspath(__file__), "--restore"]
+    if _STRICT_MODE:
+        helper_args.append("--strict")
     try:
         try:
             proc = run_captured(
-                [sys.executable, "-I", "-X", "utf8", os.path.abspath(__file__), "--restore"],
+                helper_args,
                 clean,
                 input_bytes=json.dumps(payload).encode("utf-8"),
                 new_session=_ACTIVE is not None,
@@ -1183,6 +1230,11 @@ def _safe_component(text: str) -> str:
 
 
 def cache_directory(env: Mapping[str, str]) -> Optional[str]:
+    if _STRICT_MODE:
+        try:
+            return restore_work_base(env)
+        except (OSError, ValueError):
+            return None
     tmp = env.get("TMPDIR", "")
     if tmp and safe_absolute(tmp) and os.path.isdir(tmp):
         return tmp
@@ -1709,13 +1761,18 @@ def _main(argv: Sequence[str]) -> int:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run the guard with its selected decision failure policy."""
+    global _STRICT_MODE
     if argv is None:
         argv = sys.argv[1:]
+    previous = _STRICT_MODE
+    _STRICT_MODE = "--strict" in argv
     try:
         return _main(argv)
     except (Exception, KeyboardInterrupt) as exc:
         _emergency(exc, "--shell" in argv)
-        return STRICT_FAILURE_EXIT if "--strict" in argv else 0
+        return STRICT_FAILURE_EXIT if _STRICT_MODE else 0
+    finally:
+        _STRICT_MODE = previous
 
 
 if __name__ == "__main__":
