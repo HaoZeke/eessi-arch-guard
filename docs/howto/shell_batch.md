@@ -1,6 +1,6 @@
 # Run the guard from a batch script
 
-Use this when the site has not installed the TaskProlog. At the top of the batch script:
+Use this when the site has not installed the TaskProlog. For `srun` steps, see [Use the guard without changing the site TaskProlog](user_task_prolog.md). At the top of the batch script:
 
 ```bash
 eval "$(eessi-arch-guard --shell)"
