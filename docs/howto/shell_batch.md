@@ -37,3 +37,17 @@ x86_64/amd/zen4->x86_64/amd/zen2
 The `eval` block is what the shell sees after applying stdout. `EESSI_SOFTWARE_SUBDIR` is the node, and `EESSI_ARCH_GUARD_RELOADED` records the change. There is no `print` line: that directive belongs to the prolog protocol.
 
 This eval fixes the shell that runs it. `srun ./a.out` from that shell inherits the corrected environment only when the `srun` is started after the eval and the export reaches the step. A bare exec that never passed through the shell still has the submitting environment. The [TaskProlog install](install_prolog.md) is the path that runs before `execve`.
+
+## Refuse a failed restore before the payload
+
+An opt-in job wrapper can use strict status instead of interpreting stderr:
+
+```bash
+if delta="$(/usr/bin/python3 -I /absolute/path/eessi_arch_guard.py --strict --shell)"; then
+    eval "$delta"
+else
+    exit "$?"
+fi
+```
+
+The source path names the installed guard file. The native Python interpreter starts before any inherited EESSI Python. A nonzero guard status prevents the payload from running. This does not alter the configured site TaskProlog.

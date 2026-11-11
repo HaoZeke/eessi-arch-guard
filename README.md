@@ -28,10 +28,10 @@ TaskProlog=/usr/local/sbin/eessi-arch-guard
 ## Flags and environment
 
 ```
-eessi-arch-guard [--shell] [--chain PATH] [--timeout SEC] [--restore] [-h|--help] [--version]
+eessi-arch-guard [--shell] [--strict] [--chain PATH] [--timeout SEC] [--restore] [-h|--help] [--version]
 ```
 
-`--shell` prints bash assignments. `--chain PATH` runs an existing task prolog first. `--timeout SEC` bounds the decision. `--restore` is the helper the prolog execs. `-h` and `--help` print the usage text. `--version` prints the version.
+`--shell` prints bash assignments. `--strict` returns status 78 for a failed decision or unexpected exception; successful reloads, no-ops and intentional skips return zero. The default TaskProlog failure policy is unchanged. `--chain PATH` runs an existing task prolog first. `--timeout SEC` bounds the decision. `--restore` is the helper the prolog execs. `-h` and `--help` print the usage text. `--version` prints the version.
 
 The prolog compares `EESSI_SOFTWARE_SUBDIR` and `EESSI_ACCEL_SUBDIR` with `eessi_archdetect.sh`, walking `<EESSI_PREFIX>/software/<EESSI_OS_TYPE>/<candidate>/software`. It may set `EESSI_SOFTWARE_SUBDIR_OVERRIDE` and drop a stale `EESSI_ARCHDETECT_OPTIONS`. Opt-out and pins: `EESSI_ARCH_GUARD=0`, `EESSI_ARCHDETECT_OPTIONS_OVERRIDE`, `EESSI_ACCELERATOR_TARGET_OVERRIDE`. Loud results set `EESSI_ARCH_GUARD_FAILED`. `EESSI_ARCH_GUARD_MISSING=ignore` restores silence when no software directory exists. `EESSI_ARCH_GUARD_VERBOSE=1` writes skip reasons to stderr. `EESSI_ARCH_GUARD_RELOADED` is `was->now`. The cache sits under `TMPDIR` if that directory exists, otherwise `/tmp`, and is opened with `O_NOFOLLOW`. The cache key includes `LOADEDMODULES`, `MODULEPATH`, `EESSI_INIT_PREFIX`, `EESSI_PROC_CPUINFO`, and `PATH`. `LMOD_CMD` is the module command the helper execs. `SLURM_JOB_ID`, `SLURM_STEP_ID`, and `SLURM_LOCALID` (local task 0) scope the cache and the `print` line. The helper process itself is `python3 -I -X utf8` with `PATH`, `HOME`, `LANG`, `LC_ALL`, `TMPDIR`, and `EESSI_ARCH_GUARD_WORKDIR` in its environment.
 

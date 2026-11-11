@@ -112,6 +112,7 @@ PROLOG_LINE_MAX = 4094
 # Slurm src/common/read_config.h DEFAULT_UNKILLABLE_TIMEOUT. One deadline
 # covers the whole decision.
 DEFAULT_TIMEOUT = 60.0
+STRICT_FAILURE_EXIT = 78
 TIMEOUT_MAX = threading.TIMEOUT_MAX
 # flock has no timeout and Python retries EINTR, so the wait is a
 # non-blocking loop. 0.05 s still ends a 1 s deadline in one shot, and a
@@ -136,11 +137,12 @@ def _seconds_label(value: float) -> str:
 
 
 HELP = """\
-usage: eessi-arch-guard [--shell] [--chain PATH] [--timeout SEC] [--restore] [-h|--help] [--version]
+usage: eessi-arch-guard [--shell] [--strict] [--chain PATH] [--timeout SEC] [--restore] [-h|--help] [--version]
 
 Slurm TaskProlog: when the loaded EESSI CPU or accelerator target is not this
 node's, print export/unset lines for the reloaded module environment.
 --shell prints bash for: eval "$(eessi-arch-guard --shell)"
+--strict returns 78 on a failed decision or an unexpected exception.
 --chain PATH runs an existing task prolog first. Slurm does not pass arguments,
 so a site sets this in a wrapper or in a root-owned eessi-arch-guard.conf.
 --timeout SEC bounds the decision. The default is %s seconds.
@@ -1569,7 +1571,7 @@ def run_chain(path: str, env: Mapping[str, str]) -> Tuple[int, bytes, bytes]:
 
 
 class Args(NamedTuple):
-    """Parsed argv: shell, restore, help, version, chain, and timeout text."""
+    """Parsed output mode, helper mode, configuration and failure policy."""
 
     shell: bool
     restore: bool
@@ -1577,11 +1579,12 @@ class Args(NamedTuple):
     version: bool
     chain: Optional[str]
     timeout: Optional[str]
+    strict: bool = False
 
 
 def parse_args(argv: Sequence[str]) -> Args:
     """Parse the prolog argv. Flags other than the documented ones are skipped."""
-    shell = restore = help_ = version = False
+    shell = restore = help_ = version = strict = False
     chain = None
     timeout = None
     index = 0
@@ -1589,6 +1592,8 @@ def parse_args(argv: Sequence[str]) -> Args:
         arg = argv[index]
         if arg == "--shell":
             shell = True
+        elif arg == "--strict":
+            strict = True
         elif arg == "--restore":
             restore = True
         elif arg in ("-h", "--help"):
@@ -1606,7 +1611,7 @@ def parse_args(argv: Sequence[str]) -> Args:
         elif arg.startswith("--timeout="):
             timeout = arg.split("=", 1)[1]
         index += 1
-    return Args(shell, restore, help_, version, chain, timeout)
+    return Args(shell, restore, help_, version, chain, timeout, strict)
 
 
 def _announce(env: Mapping[str, str], shell: bool) -> bool:
@@ -1689,25 +1694,27 @@ def _main(argv: Sequence[str]) -> int:
     except Exception as exc:
         _write_stdout(chain_out, b"")
         _emergency(exc, args.shell)
-        return 0
+        return STRICT_FAILURE_EXIT if args.strict else 0
 
     if args.shell and outcome.message:
         write_fd(2, message_bytes(outcome.message) + b"\n")
     if env.get("EESSI_ARCH_GUARD_VERBOSE") == "1" and outcome.detail:
         write_fd(2, message_bytes(outcome.detail) + b"\n")
     _write_stdout(chain_out, text)
+    if args.strict and outcome.kind == "failed":
+        return STRICT_FAILURE_EXIT
     return 0
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Run the guard. Exit 0 unless a chained prolog exits non-zero."""
+    """Run the guard with its selected decision failure policy."""
     if argv is None:
         argv = sys.argv[1:]
     try:
         return _main(argv)
     except (Exception, KeyboardInterrupt) as exc:
         _emergency(exc, "--shell" in argv)
-        return 0
+        return STRICT_FAILURE_EXIT if "--strict" in argv else 0
 
 
 if __name__ == "__main__":

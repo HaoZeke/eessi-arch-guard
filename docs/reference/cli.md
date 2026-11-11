@@ -1,7 +1,7 @@
 # Command line
 
 ```text
-eessi-arch-guard [--shell] [--chain PATH] [--timeout SEC] [--restore] [-h|--help] [--version]
+eessi-arch-guard [--shell] [--strict] [--chain PATH] [--timeout SEC] [--restore] [-h|--help] [--version]
 ```
 
 `python3 src/eessi_arch_guard.py --help` prints:
@@ -35,3 +35,11 @@ so a site sets this in a wrapper or in a root-owned eessi-arch-guard.conf.
 Flags other than these are skipped. The process exits 0 unless a chained prolog exits non-zero, or `--restore` hits an exception (that path exits 1 and writes the reason to stderr). The TaskProlog path catches exceptions and exits 0.
 
 `--restore` is the helper described in [Concepts](../topics/concepts.md). The JSON request has keys `v` (1), `env`, `eessi`, `modules`, and `lmod`. Names and values are the Latin-1 wire form from {py:func}`eessi_arch_guard.to_wire`.
+
+## Strict user job and step status
+
+`--strict` returns 78 when the decision fails or an unexpected exception interrupts it.
+The same flag works with `--shell` and with task-prolog output.
+A successful reload, a same-target no-op or an intentional skip returns zero.
+A chained prolog failure retains its own nonzero status.
+Without `--strict`, the default site TaskProlog keeps its fail-open decision policy.
