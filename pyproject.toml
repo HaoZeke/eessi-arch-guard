@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eessi-arch-guard"
-version = "0.1.1"
+version = "0.1.2"
 description = "Reload an EESSI module environment when a Slurm task lands on another CPU or GPU target."
 readme = "README.md"
 license = "MIT"

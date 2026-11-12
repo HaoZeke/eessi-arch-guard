@@ -1,3 +1,16 @@
+## [0.1.2] - 2026-11-12
+
+### Features
+
+- Opt-in strict mode returns status 78 for failed decisions and unexpected exceptions.
+- Restore numeric year-module frontends alongside EESSI module names.
+- Strict restores and caches use caller-owned private job or state directories.
+
+### Docs
+
+- Describe user-space Slurm task prologs without changing the site TaskProlog.
+- Verify the supported Python 3.9 and 3.12 interfaces and documented examples.
+
 ## [0.1.1] - 2026-11-08
 
 ### Docs
