@@ -30,7 +30,7 @@ eval "$(/usr/bin/python3 -I /path/to/eessi_arch_guard.py --shell)"
 
 ## What a wrong tree looks like, and the fix
 
-Measured on Snellius (Slurm 26.05.5) with EESSI 2026.06 and `GSL/2.8-GCC-15.2.0` loaded on a zen2 login node, then run on a zen4 (genoa) node:
+Measured on a Slurm 26.05.5 cluster with EESSI 2026.06 and `GSL/2.8-GCC-15.2.0` loaded on a zen2 login node, then run on a zen4 (genoa) node:
 
 | How the task started | `EESSI_SOFTWARE_SUBDIR` in the task | GSL tree |
 |---|---|---|
