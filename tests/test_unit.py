@@ -458,6 +458,75 @@ class UnitTests:
         finally:
             shutil.rmtree(directory)
 
+    def _cache_dir_and_name(self, job):
+        directory = tempfile.mkdtemp(prefix="eessi-arch-guard-cache-")
+        env = _env(TMPDIR=directory, SLURM_JOB_ID=job, SLURM_STEP_ID="batch")
+        path = guard.cache_file_path(env)
+        return env, directory, path, os.path.basename(path)
+
+    def test_cache_read_needs_an_owned_private_regular_file(self):
+        _env_, directory, path, name = self._cache_dir_and_name("81")
+        try:
+            guard._write_cache(path, guard.Outcome({"PATH": "/bin"}, None, "reloaded", None))
+            assert guard._read_cache(directory, name, shell=False) is not None
+            os.chmod(path, 0o640)
+            assert guard._read_cache(directory, name, shell=False) is None
+            os.chmod(path, 0o600)
+            twin = os.path.join(directory, "twin")
+            os.link(path, twin)
+            assert guard._read_cache(directory, name, shell=False) is None
+            os.unlink(twin)
+            assert guard._read_cache(directory, name, shell=False) is not None
+        finally:
+            shutil.rmtree(directory)
+
+    def test_cache_read_does_not_block_on_a_fifo(self):
+        _env_, directory, path, name = self._cache_dir_and_name("82")
+        try:
+            os.mkfifo(path, 0o600)
+            done = []
+            reader = threading.Thread(
+                target=lambda: done.append(guard._read_cache(directory, name, shell=False)),
+                daemon=True,
+            )
+            reader.start()
+            reader.join(5)
+            assert done == [None], done
+        finally:
+            shutil.rmtree(directory)
+
+    def test_cached_changes_obey_the_never_touch_list(self):
+        _env_, directory, path, name = self._cache_dir_and_name("83")
+        try:
+            for key in ("LD_PRELOAD", "LD_LIBRARY_PATH", "SLURM_JOB_ID", "BASH_FUNC_x%%", "TMPDIR"):
+                outcome = guard.Outcome({key: "/evil.so"}, None, "reloaded", None)
+                guard._write_cache(path, outcome)
+                assert guard._read_cache(directory, name, shell=False) is None, key
+        finally:
+            shutil.rmtree(directory)
+
+    def test_untrusted_lock_bypasses_the_cache(self):
+        env, directory, path, _name = self._cache_dir_and_name("84")
+        calls = []
+        original = guard.decide
+
+        def fake_decide(*_args, **_kwargs):
+            calls.append(1)
+            return guard.Outcome({"PATH": "/bin"}, None, "reloaded", None)
+
+        guard.decide = fake_decide
+        try:
+            fd = os.open(path + ".lock", os.O_WRONLY | os.O_CREAT, 0o600)
+            os.close(fd)
+            os.chmod(path + ".lock", 0o666)
+            guard.cached_decide(env, shell=False)
+            assert calls == [1]
+            assert not os.path.exists(path), "an untrusted lock must not lead to a cache write"
+            assert os.stat(path + ".lock").st_mode & 0o777 == 0o666
+        finally:
+            guard.decide = original
+            shutil.rmtree(directory)
+
     def test_wire_round_trip_keeps_the_byte(self):
         text = "caf\udce9/bin"
         assert guard.from_wire(guard.to_wire(text)) == text

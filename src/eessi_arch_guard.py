@@ -1265,11 +1265,36 @@ def cache_file_path(env: Mapping[str, str]) -> Optional[str]:
     return os.path.join(directory, name)
 
 
+def _never_cache(name: str) -> bool:
+    """Names a cache entry may not carry: the never-touch list and the loader's LD_*."""
+    return _never_touch(name) or name.startswith("LD_")
+
+
+def _owned_private_file(fd: int) -> bool:
+    """True when fd is a regular file of this uid with one link and no group or other bits.
+
+    The cache and its lock sit in a directory other users can write, such as
+    /tmp; a file someone else created at the name is not ours to trust.
+    """
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(st.st_mode)
+        and st.st_uid == os.getuid()
+        and st.st_nlink == 1
+        and st.st_mode & 0o077 == 0
+    )
+
+
 def _cache_changes_ok(changes: object, shell: bool) -> bool:
     if not isinstance(changes, dict):
         return False
     for key, value in changes.items():
         if not isinstance(key, str) or ENV_NAME_RE.fullmatch(key) is None:
+            return False
+        if _never_cache(key):
             return False
         if value is None:
             continue
@@ -1282,10 +1307,17 @@ def _read_cache(directory: str, name: str, shell: bool) -> Optional[Outcome]:
     dirfd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
         try:
-            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dirfd)
+            # O_NONBLOCK: a FIFO planted at the name must not hang the prolog.
+            fd = os.open(
+                name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                dir_fd=dirfd,
+            )
         except OSError:
             return None
         try:
+            if not _owned_private_file(fd):
+                return None
             blob = os.read(fd, 8 * 1024 * 1024)
         finally:
             os.close(fd)
@@ -1394,14 +1426,17 @@ def cached_decide(
         try:
             lockfd = os.open(
                 name + ".lock",
-                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
                 0o600,
                 dir_fd=dirfd,
             )
         except OSError:
             return decide(env, shell, cpu_probe, accel_probe, restore)
         try:
-            os.fchmod(lockfd, 0o600)
+            # A lock file someone else made is neither locked on nor chmodded:
+            # decide without the cache.
+            if not _owned_private_file(lockfd):
+                return decide(env, shell, cpu_probe, accel_probe, restore)
             _lock_exclusive(lockfd)
             loaded = _read_cache(directory, name, shell)
             if loaded is not None:

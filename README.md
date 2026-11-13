@@ -37,6 +37,8 @@ The prolog compares `EESSI_SOFTWARE_SUBDIR` and `EESSI_ACCEL_SUBDIR` with `eessi
 
 Strict restores and caches use an existing private directory owned by the caller: `EESSI_ARCH_GUARD_WORKDIR`, then `TMPDIR`, then `XDG_STATE_HOME/eessi-arch-guard` (or `HOME/.local/state/eessi-arch-guard`). The base must exist and is never created or widened by the guard. Strict mode has no shared temporary-directory fallback.
 
+Outside strict mode the cache falls back to `/tmp`, which other users can write. The guard trusts a cache or lock file only when it is a regular file owned by the caller, with one link and no group or other permission bits, checked on the open descriptor; a FIFO at the name does not block it. A cached entry that changes `LD_*`, `SLURM_*`, `BASH_FUNC_*` or any other denylisted name is ignored and the decision is made again.
+
 The helper never emits `SLURM_*`, `BASH_FUNC_*`, `TMPDIR`, `BASH_ENV`, or shell bookkeeping from the task environment. The full denylist is `_`, `SHLVL`, `PWD`, `OLDPWD`, `TMPDIR`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS`, `BASH_XTRACEFD`, `PS4`, `BASH_ARGC`, `BASH_ARGV`, `BASH_LINENO`, `BASH_SOURCE`, `BASH_VERSINFO`, `BASH_VERSION`, `DIRSTACK`, `EPOCHREALTIME`, `EPOCHSECONDS`, `FUNCNAME`, `GROUPS`, `HOSTNAME`, `HOSTTYPE`, `IFS`, `MACHTYPE`, `OPTERR`, `OPTIND`, `OSTYPE`, `PIPESTATUS`, `PPID`, plus any `BASH_FUNC_*` or `SLURM_*` name. `PS1`, `PS2`, `PS3`, and `PROMPT_COMMAND` are the exception: an unsafe new value is left unchanged. Bash for the restore is `bash --noprofile --norc` with `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS`, `BASH_XTRACEFD`, and `PS4` removed.
 
 The worked install, the config file, and the failure messages are in `docs/`.
