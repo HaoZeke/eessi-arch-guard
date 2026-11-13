@@ -51,4 +51,15 @@ ruff check src tests
 python3 -m unittest discover -s tests -v
 ```
 
+The Zig build (`zig/`, Zig 0.17.1) is a static binary with the same interface; [COMPAT.md](COMPAT.md) lists that interface.
+Build it and run the same suite against it:
+
+```console
+zig build test
+zig build -Drelease=true
+TOOL_BIN="$PWD/zig-out/bin/eessi-arch-guard" python3 -m unittest discover -s tests -v
+```
+
+The Python guard stays the default prolog until the binary has passed a shadow comparison on a partition, the real-Lmod tests, and a second review of its validators.
+
 Copyright (c) eessi-arch-guard developers

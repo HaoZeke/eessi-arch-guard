@@ -1,0 +1,19 @@
+.{
+    .name = .eessi_arch_guard,
+    .version = "0.2.0",
+    .fingerprint = 0x833266375a6f0af0,
+    .minimum_zig_version = "0.17.1",
+    .dependencies = .{
+        .zig_common = .{
+            .url = "git+https://github.com/stackhands/zig-common#47861249627e7189aa424e324adf50149bd49b55",
+            .hash = "zig_common-0.1.0-kBaPeeHMAAC2H19ifbDnH2Qjrvsj_KZGF8vTqcjMPg7k",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "zig",
+        "LICENSE",
+        "README.md",
+    },
+}

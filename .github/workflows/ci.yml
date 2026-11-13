@@ -25,6 +25,29 @@ jobs:
       - name: test
         run: python -m unittest discover -s tests -v
 
+  zig:
+    # The Zig build against the same Python suite, through TOOL_BIN.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # setup-zig checks the tarball's minisign signature against the Zig
+      # project's key.
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
+      - run: zig fmt --check build.zig build.zig.zon zig
+      - run: zig build test --summary all
+      - run: zig build -Drelease=true
+      - name: Python suite against the binary
+        run: TOOL_BIN="$PWD/zig-out/bin/eessi-arch-guard" python -m unittest discover -s tests -v
+
   docs:
     runs-on: ubuntu-22.04
     steps:

@@ -9,3 +9,5 @@ build/
 docs/_build/
 docs/examples/_work/
 src/eessi-arch-guard.conf
+.zig-cache/
+zig-out/
