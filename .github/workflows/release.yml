@@ -1,0 +1,64 @@
+name: release
+# On a tag vX.Y.Z: build the static binaries, test each on its own
+# architecture, check the version string against the tag, and publish the
+# binaries with SHA256SUMS and build provenance attestations.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-latest
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
+      - run: zig build test --summary all
+      - name: Python suite against the binary
+        run: zig build -Drelease=true && TOOL_BIN="$PWD/zig-out/bin/eessi-arch-guard" python3 -m unittest discover -s tests
+      - name: build
+        run: |
+          zig build -Drelease=true -Dtarget=${{ matrix.arch }}-linux-musl --prefix out
+          # --version prints the bare version, as the Python guard does.
+          got=$(out/bin/eessi-arch-guard --version)
+          py=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/eessi_arch_guard.py)
+          if [ "${got}" != "${GITHUB_REF_NAME#v}" ] || [ "${py}" != "${got}" ]; then
+            echo "versions: tag ${GITHUB_REF_NAME}, binary ${got}, Python ${py}"; exit 1
+          fi
+          mkdir dist
+          cp out/bin/eessi-arch-guard "dist/eessi-arch-guard-${GITHUB_REF_NAME#v}-${{ matrix.arch }}-linux-musl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.arch }}
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          merge-multiple: true
+          path: dist
+      - run: cd dist && sha256sum eessi-arch-guard-* > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - name: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes-file /dev/null --draft
