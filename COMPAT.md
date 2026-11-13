@@ -319,3 +319,20 @@ All tests live under `eessi-arch-guard/tests/`. `harness.py` L14-18 supports `TO
 | `render_bytes` dry run | The decision runs `render_bytes` itself (prolog mode) to detect over-long lines; a cached outcome is not re-checked, so an over-long cached line raises `ValueError` in `_main` and becomes an emergency skip (exit 0, or 78 under strict). | L1211-1220, L1782-1788 |
 | `TIMEOUT_MAX` is platform-dependent | `threading.TIMEOUT_MAX` is 9223372036.0 here; the number appears in warning text. | L118, L1529, L1538 |
 | Not determined | The behaviour of the real `eessi_archdetect.sh` (only the stub in `tests/stubs/` was read); behaviour of real Lmod output; the docs for tutorial/howto pages under `docs/howto`, `docs/tutorial`, `docs/topics/{concepts,design,detection}.md` were not read line by line. | n/a |
+
+## Where the Zig build differs on purpose
+
+The rows above describe the Python guard at 0.1.2. The cache name gained the output mode in 0.2.0 for both implementations. The Zig build in `zig/` keeps everything above except the following.
+
+| case | Python guard | Zig build |
+|---|---|---|
+| restore helper | `python3 -I -X utf8 eessi_arch_guard.py --restore` | the same binary with `--restore`; the request and reply keep their JSON shape |
+| a request to `--restore` that is not UTF-8, not JSON or not an object | exit 1 with the Python exception text | exit 1 with a fixed text naming which of the three it was |
+| the chained prolog's stdin | inherited | `/dev/null` |
+| the config file | checked with `lstat`, then read by path | the same checks with `lstat`, then opened without following a link and checked again on the open file; a file swapped in between is ignored; at most 1 MiB is read |
+| a config read error | the `OSError` text | `PATH: ErrorName` |
+| the message encoding | the locale's preferred encoding, which Python's UTF-8 mode makes UTF-8 under the C, POSIX and UTF-8 locales | always UTF-8; a non-UTF-8 legacy locale gives different bytes for a non-ASCII message |
+| a cache entry holding a lone surrogate outside U+DC80..U+DCFF | read, then failing when written out | refused, and the decision is made again |
+| the skip line after an unexpected failure | `skipped, ExceptionName: text` | `skipped, panic: text`, `skipped, signal: SIGSEGV` and the like; a crash signal still exits 0 (78 with `--strict`) |
+| archdetect or Lmod output past 64 MiB, stderr past 1 MiB | read whole | refused as a failed run; stderr is cut |
+| `accelpath` output | stripped of Unicode whitespace | stripped of ASCII whitespace |
