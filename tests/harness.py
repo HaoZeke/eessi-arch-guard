@@ -11,6 +11,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GUARD = ROOT / "src" / "eessi_arch_guard.py"
+# TOOL_BIN runs the tests that start the guard as a program against another
+# build of it; unset, they run src/eessi_arch_guard.py with this interpreter.
+# Tests that read GUARD's source or import it test the Python guard either way.
+TOOL_BIN = os.environ.get("TOOL_BIN", "")
+PROGRAM = Path(TOOL_BIN).resolve() if TOOL_BIN else GUARD
+GUARD_ARGV = [str(PROGRAM)] if TOOL_BIN else [sys.executable, "-I", str(GUARD)]
 STUBS = Path(__file__).resolve().parent / "stubs"
 FAKE_LMOD = Path(__file__).resolve().parent / "fake_lmod.py"
 
@@ -166,7 +172,7 @@ def base_env(
 
 def run_guard(env, args=()):
     proc = subprocess.run(
-        [sys.executable, "-I", str(GUARD), *args],
+        [*GUARD_ARGV, *args],
         capture_output=True,
         text=True,
         env=env,

@@ -395,7 +395,7 @@ class IntegrationTests(unittest.TestCase):
             one["SLURM_LOCALID"] = str(rank)
             procs.append(
                 subprocess.Popen(
-                    [sys.executable, "-I", str(harness.GUARD)],
+                    list(harness.GUARD_ARGV),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -425,7 +425,7 @@ class IntegrationTests(unittest.TestCase):
             one["SLURM_LOCALID"] = str(rank)
             procs.append(
                 subprocess.Popen(
-                    [sys.executable, "-I", str(harness.GUARD)],
+                    list(harness.GUARD_ARGV),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -463,7 +463,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(harness.log_lines(self.site.log), [])
 
     def test_bad_config_byte_keeps_the_other_keys(self):
-        conf = Path(harness.GUARD).with_name("eessi-arch-guard.conf")
+        conf = harness.PROGRAM.with_name("eessi-arch-guard.conf")
         ok_path = os.path.join(self.site.root, "chain-ok.sh")
         with open(ok_path, "w", encoding="utf-8") as handle:
             handle.write("#!/bin/sh\necho 'export FROM_CHAIN=yes'\n")
@@ -485,7 +485,7 @@ class IntegrationTests(unittest.TestCase):
             subprocess.check_call(["sudo", "rm", "-f", str(conf)])
 
     def test_untrusted_config_is_ignored(self):
-        conf = Path(harness.GUARD).with_name("eessi-arch-guard.conf")
+        conf = harness.PROGRAM.with_name("eessi-arch-guard.conf")
         conf.write_text("chain = /bin/true\n", encoding="utf-8")
         try:
             env = self._cpu_env(ZEN4, "zen2")
@@ -523,7 +523,7 @@ class IntegrationTests(unittest.TestCase):
         env["LC_ALL"] = "en_US.ISO-8859-1"
         env["LANG"] = "en_US.ISO-8859-1"
         proc = subprocess.run(
-            [sys.executable, "-I", str(harness.GUARD)],
+            list(harness.GUARD_ARGV),
             capture_output=True,
             env=env,
             check=False,
@@ -542,7 +542,7 @@ class IntegrationTests(unittest.TestCase):
         env["PATH"] = raw + ":" + env["PATH"]
         env["EESSI_TEST_BASE_PATH"] = raw + ":" + env["EESSI_TEST_BASE_PATH"]
         proc = subprocess.run(
-            [sys.executable, "-I", str(harness.GUARD)],
+            list(harness.GUARD_ARGV),
             capture_output=True,
             env=env,
             check=False,
@@ -556,7 +556,7 @@ class IntegrationTests(unittest.TestCase):
         for args in ([], ["--shell"]):
             with open("/dev/full", "wb") as sink:
                 blocked = subprocess.run(
-                    [sys.executable, "-I", str(harness.GUARD), *args],
+                    [*harness.GUARD_ARGV, *args],
                     stdout=sink,
                     stderr=subprocess.PIPE,
                     env=env,
@@ -566,7 +566,7 @@ class IntegrationTests(unittest.TestCase):
             read_fd, write_fd = os.pipe()
             os.close(read_fd)
             blocked = subprocess.run(
-                [sys.executable, "-I", str(harness.GUARD), *args],
+                [*harness.GUARD_ARGV, *args],
                 stdout=write_fd,
                 stderr=subprocess.PIPE,
                 env=env,
@@ -659,7 +659,7 @@ class IntegrationTests(unittest.TestCase):
         env = self._hang_env()
         env["EESSI_TEST_GPU_HANG"] = "30"
         proc = subprocess.Popen(
-            [sys.executable, "-I", str(harness.GUARD), "--timeout", "30"],
+            [*harness.GUARD_ARGV, "--timeout", "30"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -717,7 +717,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(harness.log_lines(self.site.arch_log), [])
 
     def test_chain_keeps_the_config_timeout(self):
-        conf = Path(harness.GUARD).with_name("eessi-arch-guard.conf")
+        conf = harness.PROGRAM.with_name("eessi-arch-guard.conf")
         conf.write_text("timeout = 1\n", encoding="utf-8")
         subprocess.check_call(["sudo", "chown", "root:root", str(conf)])
         subprocess.check_call(["sudo", "chmod", "644", str(conf)])
@@ -783,7 +783,7 @@ class IntegrationTests(unittest.TestCase):
                     shutil.rmtree(path, ignore_errors=True)
 
     def test_config_timeout_bounds_the_decision(self):
-        conf = Path(harness.GUARD).with_name("eessi-arch-guard.conf")
+        conf = harness.PROGRAM.with_name("eessi-arch-guard.conf")
         conf.write_text("timeout = 1\n", encoding="utf-8")
         subprocess.check_call(["sudo", "chown", "root:root", str(conf)])
         subprocess.check_call(["sudo", "chmod", "644", str(conf)])

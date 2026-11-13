@@ -52,7 +52,7 @@ def main():
         site.add_module(ZEN4, "R/4.4.2")
         site.write_cpuinfo("zen4")
         env = harness.base_env(site, ZEN4, ["R/4.4.2"], gpu="none")
-        argv = [sys.executable, "-I", str(harness.GUARD)]
+        argv = list(harness.GUARD_ARGV)
         time_command(argv, env, WARMUP)
         cold = time_command(argv, env, N)
 

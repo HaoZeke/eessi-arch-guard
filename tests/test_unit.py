@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import eessi_arch_guard as guard  # noqa: E402
+import harness  # noqa: E402
 from slurm_model import apply_task_prolog  # noqa: E402
 
 ZEN4 = "x86_64/amd/zen4"
@@ -364,9 +365,8 @@ class UnitTests:
         assert out.startswith(b"print eessi-arch-guard: skipped")
 
     def test_unwritable_stdout_still_exits_zero(self):
-        script = str(Path(__file__).resolve().parents[1] / "src" / "eessi_arch_guard.py")
         for args in (["--version"], ["--help"]):
-            _assert_writes_exit_zero(script, args)
+            _assert_writes_exit_zero(harness.GUARD_ARGV, args)
 
     def test_chain_config_parser_and_untrusted_file(self):
         text = "# comment\nchain = /bin/true\ntimeout = 60\n"
@@ -699,12 +699,12 @@ class UnitTests:
             shutil.rmtree(root)
 
 
-def _assert_writes_exit_zero(script, args, env=None):
+def _assert_writes_exit_zero(argv, args, env=None):
     if env is None:
         env = {"PATH": "/usr/bin:/bin", "HOME": "/tmp", "LC_ALL": "C"}
     with open("/dev/full", "wb") as sink:
         proc = subprocess.run(
-            [sys.executable, "-I", script, *args],
+            [*argv, *args],
             stdout=sink,
             stderr=subprocess.PIPE,
             env=env,
@@ -714,7 +714,7 @@ def _assert_writes_exit_zero(script, args, env=None):
     read_fd, write_fd = os.pipe()
     os.close(read_fd)
     proc = subprocess.run(
-        [sys.executable, "-I", script, *args],
+        [*argv, *args],
         stdout=write_fd,
         stderr=subprocess.PIPE,
         env=env,
