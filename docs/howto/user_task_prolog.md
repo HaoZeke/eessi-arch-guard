@@ -10,7 +10,7 @@ The environment variable `SLURM_TASK_PROLOG` is the same option, so a module or 
 
 ```bash
 export SLURM_TASK_PROLOG=/path/to/eessi_arch_guard.py
-srun -p genoa ./a.out
+srun -p <zen4-partition> ./a.out
 ```
 
 Give the full path from `/`; the file must be executable and readable on the compute node.
@@ -34,8 +34,8 @@ Measured on a Slurm 26.05.5 cluster with EESSI 2026.06 and `GSL/2.8-GCC-15.2.0` 
 
 | How the task started | `EESSI_SOFTWARE_SUBDIR` in the task | GSL tree |
 |---|---|---|
-| `srun -p genoa`, no guard | `x86_64/amd/zen2` | zen2 |
-| `srun -p genoa` with `SLURM_TASK_PROLOG` | `x86_64/amd/zen4` | zen4 |
+| `srun` on a zen4 partition, no guard | `x86_64/amd/zen2` | zen2 |
+| `srun` on a zen4 partition with `SLURM_TASK_PROLOG` | `x86_64/amd/zen4` | zen4 |
 | `sbatch --export=ALL`, batch step, no guard | `x86_64/amd/zen2` | zen2 |
 | same batch step after the `--shell` line | `x86_64/amd/zen4` | zen4 |
 
