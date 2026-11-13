@@ -1,5 +1,6 @@
 """Numeric year frontends in the validated loaded-module list."""
 
+import os
 import shutil
 import sys
 import tempfile
@@ -11,6 +12,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import eessi_arch_guard as guard  # noqa: E402
 import harness  # noqa: E402
 from slurm_model import apply_task_prolog  # noqa: E402
+
+
+def _no_gpu_path(root):
+    """PATH with the GPU-less nvidia-smi stub first: the host's GPU stays out of the test."""
+    bindir = Path(root) / "bin"
+    bindir.mkdir(exist_ok=True)
+    shutil.copy(Path(__file__).resolve().parent / "stubs" / "nvidia-smi", bindir / "nvidia-smi")
+    os.chmod(bindir / "nvidia-smi", 0o755)
+    return "%s:/usr/bin:/bin" % bindir
+
 
 LMOD = Path("/usr/share/lmod/lmod/libexec/lmod")
 ZEN2 = "x86_64/amd/zen2"
@@ -84,7 +95,7 @@ class YearModuleTests(unittest.TestCase):
             cpuinfo = root / "cpuinfo"
             cpuinfo.write_text("eessi_arch_matches: x86_64/amd/zen2:x86_64/generic\n")
             env = {
-                "PATH": "/usr/bin:/bin",
+                "PATH": _no_gpu_path(root),
                 "HOME": str(root),
                 "TMPDIR": str(root),
                 "LANG": "C",
