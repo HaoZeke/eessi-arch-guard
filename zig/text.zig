@@ -207,11 +207,49 @@ pub fn decodeReplace(gpa: Allocator, s: []const u8) Allocator.Error![]u8 {
 }
 
 /// str.isspace for the characters str.strip() removes.
-fn pyWhitespace(cp: u21) bool {
+pub fn pyWhitespace(cp: u21) bool {
     return switch (cp) {
         ' ', '\t', '\n', 0x0b, 0x0c, '\r', 0x1c...0x1f, 0x85, 0xa0, 0x1680, 0x2000...0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000 => true,
         else => false,
     };
+}
+
+/// str.strip(): `s` without leading and trailing Unicode whitespace.
+pub fn pyStrip(s: []const u8) []const u8 {
+    var a: usize = 0;
+    while (a < s.len) {
+        const ch = nextChar(s[a..]);
+        const cp = ch.cp orelse break;
+        if (!pyWhitespace(cp)) break;
+        a += ch.len;
+    }
+    var b: usize = a;
+    var i: usize = a;
+    while (i < s.len) {
+        const ch = nextChar(s[i..]);
+        i += ch.len;
+        const ws = if (ch.cp) |cp| pyWhitespace(cp) else false;
+        if (!ws) b = i;
+    }
+    return s[a..b];
+}
+
+/// str.split() with no separator: the runs between Unicode whitespace.
+pub fn pySplit(arena: Allocator, s: []const u8) Allocator.Error![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    var i: usize = 0;
+    var start: ?usize = null;
+    while (i < s.len) {
+        const ch = nextChar(s[i..]);
+        const ws = if (ch.cp) |cp| pyWhitespace(cp) else false;
+        if (ws) {
+            if (start) |st| try out.append(arena, s[st..i]);
+            start = null;
+        } else if (start == null) start = i;
+        i += ch.len;
+    }
+    if (start) |st| try out.append(arena, s[st..]);
+    return out.items;
 }
 
 /// one_line: controls (below 32 and 127) become spaces, the result is
@@ -337,6 +375,15 @@ test "decodeReplace uses maximal subparts" {
     const r = try decodeReplace(gpa, "a\xe2\x82b\xff\xf0\x9f\x98");
     defer gpa.free(r);
     try std.testing.expectEqualStrings("a\u{FFFD}b\u{FFFD}\u{FFFD}", r);
+}
+
+test "pyStrip and pySplit use Unicode whitespace" {
+    try std.testing.expectEqualStrings("a b", pyStrip("\u{3000} a b\u{a0}\n"));
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const parts = try pySplit(arena_state.allocator(), "avx\u{a0}waitpkg  x\xff");
+    try std.testing.expectEqual(@as(usize, 3), parts.len);
+    try std.testing.expectEqualStrings("waitpkg", parts[1]);
 }
 
 test "shellQuote" {

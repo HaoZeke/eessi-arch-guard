@@ -25,15 +25,49 @@ pub const Value = union(enum) {
         if (v != .object) return null;
         var found: ?Value = null;
         for (v.object) |m| {
-            // Keys are compared after decoding as cache text; every key the
-            // guard looks up is ASCII without escapes.
-            if (std.mem.eql(u8, m.key, key)) found = m.value;
+            if (keyEql(m.key, key)) found = m.value;
         }
         return found;
     }
 };
 
 pub const Member = struct { key: []const u8, value: Value };
+
+/// A raw JSON key equals `want` (ASCII, as every key the guard looks up
+/// is) once its escapes are decoded.
+fn keyEql(raw: []const u8, want: []const u8) bool {
+    var i: usize = 0;
+    var j: usize = 0;
+    while (i < raw.len) {
+        var c: u21 = raw[i];
+        if (c == '\\') {
+            const e = raw[i + 1];
+            if (e == 'u') {
+                c = std.fmt.parseInt(u16, raw[i + 2 .. i + 6], 16) catch return false;
+                i += 6;
+            } else {
+                c = switch (e) {
+                    'b' => 0x08,
+                    'f' => 0x0c,
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    else => e,
+                };
+                i += 2;
+            }
+        } else i += 1;
+        if (j >= want.len or c != want[j]) return false;
+        j += 1;
+    }
+    return j == want.len;
+}
+
+fn isHex(s: []const u8) bool {
+    if (s.len != 4) return false;
+    for (s) |c| if (!std.ascii.isHex(c)) return false;
+    return true;
+}
 
 pub const ParseError = Allocator.Error || error{Syntax};
 
@@ -124,6 +158,8 @@ const Parser = struct {
                 const digits = p.i;
                 while (p.i < p.s.len and std.ascii.isDigit(p.s[p.i])) p.i += 1;
                 if (p.i == digits) return error.Syntax;
+                // JSON has no leading zeros: 0 alone, or 1-9 then digits.
+                if (p.s[digits] == '0' and p.i - digits > 1) return error.Syntax;
                 if (p.i < p.s.len and p.s[p.i] == '.') {
                     p.i += 1;
                     const f = p.i;
@@ -161,7 +197,7 @@ const Parser = struct {
                     '"', '\\', '/', 'b', 'f', 'n', 'r', 't' => p.i += 2,
                     'u' => {
                         if (p.i + 6 > p.s.len) return error.Syntax;
-                        _ = std.fmt.parseInt(u16, p.s[p.i + 2 .. p.i + 6], 16) catch return error.Syntax;
+                        if (!isHex(p.s[p.i + 2 .. p.i + 6])) return error.Syntax;
                         p.i += 6;
                     },
                     else => return error.Syntax,
@@ -336,5 +372,9 @@ test "parse objects, duplicates and nesting" {
     try std.testing.expectEqualStrings("2", v.get("v").?.number);
     try std.testing.expectEqual(@as(usize, 3), v.get("k").?.array.len);
     try std.testing.expectError(error.Syntax, parse(a, "{\"a\":1,}"));
+    try std.testing.expectError(error.Syntax, parse(a, "{\"v\":01}"));
+    try std.testing.expectError(error.Syntax, parse(a, "\"\\u+123\""));
+    const e = try parse(a, "{\"\\u006bind\": \"x\"}");
+    try std.testing.expect(e.get("kind") != null);
     try std.testing.expectError(error.Syntax, parse(a, "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]"));
 }

@@ -282,10 +282,6 @@ fn parseCpuLine(arena: Allocator, stdout: []const u8) Allocator.Error!?[]const [
     return parts.items;
 }
 
-fn pyWhitespaceByte(b: u8) bool {
-    return b == ' ' or (b >= 0x09 and b <= 0x0d) or (b >= 0x1c and b <= 0x1f);
-}
-
 /// read_cpu_flags: the flags every `flags:` line of a cpuinfo file shares.
 fn readCpuFlags(arena: Allocator, path: []const u8) []const []const u8 {
     if (path.len == 0) return &.{};
@@ -307,13 +303,9 @@ fn readCpuFlags(arena: Allocator, path: []const u8) []const []const u8 {
         if (i >= line.len or line[i] != ':') continue;
         i += 1;
         var set: std.StringArrayHashMapUnmanaged(void) = .empty;
-        var j = i;
-        while (j < line.len) {
-            while (j < line.len and pyWhitespaceByte(line[j])) j += 1;
-            const s = j;
-            while (j < line.len and !pyWhitespaceByte(line[j])) j += 1;
-            if (j > s) set.put(arena, line[s..j], {}) catch return &.{};
-        }
+        // The file is decoded with 'replace' and split on Unicode whitespace.
+        const rest = text.decodeReplace(arena, line[i..]) catch return &.{};
+        for (text.pySplit(arena, rest) catch return &.{}) |flag| set.put(arena, flag, {}) catch return &.{};
         if (common_set) |*cs| {
             var keep: std.StringArrayHashMapUnmanaged(void) = .empty;
             for (cs.keys()) |k| if (set.contains(k)) keep.put(arena, k, {}) catch return &.{};
@@ -403,7 +395,7 @@ pub fn probeAccel(c: *Ctx, env: Map) Stop!AccelProbe {
         else => return .{ .status = .@"error", .err = std.fmt.allocPrint(c.arena, "could not run archdetect: {s}", .{why}) catch "could not run archdetect" },
     };
     if (r.code != 0) return .{ .status = .none };
-    const out = std.mem.trim(u8, decodeReplace(c, r.stdout), " \t\n\r\x0b\x0c\x1c\x1d\x1e\x1f");
+    const out = text.pyStrip(decodeReplace(c, r.stdout));
     if (out.len == 0) return .{ .status = .none };
     if (std.mem.indexOfAny(u8, out, "\n\r") != null or !text.accelSubdir(out))
         return .{ .status = .@"error", .err = "accelpath output is not an accelerator subdirectory" };
@@ -1039,9 +1031,17 @@ fn readCache(c: *Ctx, dirfd: sys.fd_t, name: []const u8, shell: bool) ?Outcome {
     };
     const ch = data.get("changes") orelse return null;
     if (ch != .object) return null;
-    var changes: Changes = .empty;
+    // json.loads keeps the last value of a repeated key.
+    var last: std.StringArrayHashMapUnmanaged(json.Value) = .empty;
     for (ch.object) |mem| {
         const key = json.decodeCache(a, mem.key) catch return null;
+        last.put(a, key, mem.value) catch return null;
+    }
+    var changes: Changes = .empty;
+    var lit = last.iterator();
+    while (lit.next()) |mem_kv| {
+        const mem = .{ .key = mem_kv.key_ptr.*, .value = mem_kv.value_ptr.* };
+        const key = mem.key;
         if (!text.envName(key) or text.neverCache(key)) return null;
         switch (mem.value) {
             .null => changes.put(a, key, null) catch return null,
@@ -1055,7 +1055,7 @@ fn readCache(c: *Ctx, dirfd: sys.fd_t, name: []const u8, shell: bool) ?Outcome {
     }
     const k = data.get("kind") orelse return null;
     if (k != .string) return null;
-    const kind = std.meta.stringToEnum(Kind, k.string) orelse return null;
+    const kind = std.meta.stringToEnum(Kind, json.decodeCache(a, k.string) catch return null) orelse return null;
     return .{ .changes = changes, .message = message, .kind = kind, .detail = detail };
 }
 

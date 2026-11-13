@@ -149,7 +149,7 @@ fn contains(argv: []const []const u8, word: []const u8) bool {
 /// with single underscores between them, a fraction, an exponent, or
 /// inf/infinity/nan in any case.
 fn pyFloat(arena: Allocator, raw: []const u8) ?f64 {
-    const s = std.mem.trim(u8, raw, " \t\n\r\x0b\x0c\x1c\x1d\x1e\x1f");
+    const s = text.pyStrip(raw);
     if (s.len == 0) return null;
     var body = s;
     var neg = false;
