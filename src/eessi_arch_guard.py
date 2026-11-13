@@ -1246,8 +1246,13 @@ def cache_directory(env: Mapping[str, str]) -> Optional[str]:
     return None
 
 
-def cache_file_path(env: Mapping[str, str]) -> Optional[str]:
-    """Cache path for this uid, node, job, and step. None when the job id is unset."""
+def cache_file_path(env: Mapping[str, str], shell: bool = False) -> Optional[str]:
+    """Cache path for this uid, node, job, step, and output mode. None when the job id is unset.
+
+    The mode is part of the name because the decision depends on it: a value
+    with a newline reloads for --shell and fails in a prolog, and only a
+    prolog line has the Slurm 17.11 length cap.
+    """
     job = env.get("SLURM_JOB_ID", "")
     if not job:
         return None
@@ -1255,11 +1260,12 @@ def cache_file_path(env: Mapping[str, str]) -> Optional[str]:
     if directory is None:
         return None
     step = env.get("SLURM_STEP_ID", "batch")
-    name = ".eessi-arch-guard.%s.%s.%s.%s.%s" % (
+    name = ".eessi-arch-guard.%s.%s.%s.%s.%s.%s" % (
         os.getuid(),
         _safe_component(os.uname().nodename),
         _safe_component(job),
         _safe_component(step),
+        "shell" if shell else "prolog",
         cache_digest(env),
     )
     return os.path.join(directory, name)
@@ -1414,7 +1420,7 @@ def cached_decide(
     accel_probe=probe_accel,
     restore=call_restore,
 ) -> Outcome:
-    path = cache_file_path(env)
+    path = cache_file_path(env, shell)
     if path is None or not hasattr(os, "O_NOFOLLOW"):
         return decide(env, shell, cpu_probe, accel_probe, restore)
     directory, name = os.path.split(path)
@@ -1481,7 +1487,7 @@ def limited_decide(
         try:
             return cached_decide(env, shell, cpu_probe, accel_probe, restore)
         except _Deadline:
-            path = cache_file_path(env)
+            path = cache_file_path(env, shell)
             if path is not None:
                 directory, name = os.path.split(path)
                 loaded = _read_cache(directory, name, shell)

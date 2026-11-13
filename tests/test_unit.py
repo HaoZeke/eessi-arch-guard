@@ -464,6 +464,38 @@ class UnitTests:
         path = guard.cache_file_path(env)
         return env, directory, path, os.path.basename(path)
 
+    def test_cache_is_kept_per_output_mode(self):
+        # A newline in a value reloads for --shell and fails in a prolog, so
+        # one mode's cached result must not answer the other.
+        directory = tempfile.mkdtemp(prefix="eessi-arch-guard-cache-")
+        try:
+            env = _env(TMPDIR=directory, SLURM_JOB_ID="83", SLURM_STEP_ID="batch")
+            shell_path = guard.cache_file_path(env, shell=True)
+            prolog_path = guard.cache_file_path(env, shell=False)
+            assert shell_path != prolog_path
+            assert guard.cache_file_path(env) == prolog_path
+            calls = []
+
+            def decide(env_, shell, *_args):
+                calls.append(shell)
+                if shell:
+                    return guard.Outcome({"PATH": "/a\n/b"}, "moved", "reloaded", None)
+                return guard.Outcome({}, "failed", "failed", "unsafe-environment")
+
+            original = guard.decide
+            guard.decide = decide
+            try:
+                first = guard.cached_decide(env, True)
+                second = guard.cached_decide(env, False)
+                third = guard.cached_decide(env, True)
+            finally:
+                guard.decide = original
+            assert calls == [True, False], calls
+            assert first.kind == "reloaded" and third.kind == "reloaded"
+            assert second.kind == "failed"
+        finally:
+            shutil.rmtree(directory)
+
     def test_cache_read_needs_an_owned_private_regular_file(self):
         _env_, directory, path, name = self._cache_dir_and_name("81")
         try:

@@ -37,10 +37,10 @@ Any name starting with `BASH_FUNC_` or `SLURM_` is omitted as well.
 Within one job step the first task on a node computes the result and the others read it. The cache file is mode `0600` under `TMPDIR` when that directory exists and is absolute, otherwise under `/tmp`. The name is:
 
 ```text
-.eessi-arch-guard.<uid>.<node>.<job>.<step>.<digest>
+.eessi-arch-guard.<uid>.<node>.<job>.<step>.<mode>.<digest>
 ```
 
-`<step>` is `SLURM_STEP_ID`, or `batch` when that variable is unset. There is no cache file when `SLURM_JOB_ID` is unset. `<node>`, `<job>`, and `<step>` are used as-is when they match `^[A-Za-z0-9._-]{1,64}$`; otherwise each is a 16-character SHA-256 prefix. `<digest>` is the first 16 hex characters of the SHA-256 of these values joined by NUL:
+`<step>` is `SLURM_STEP_ID`, or `batch` when that variable is unset. `<mode>` is `prolog` or `shell`. The decision depends on the output mode: a value with a newline can be carried by `--shell` and not by a prolog line. A batch script that runs `--shell` after the task prolog therefore computes its own result. There is no cache file when `SLURM_JOB_ID` is unset. `<node>`, `<job>`, and `<step>` are used as-is when they match `^[A-Za-z0-9._-]{1,64}$`; otherwise each is a 16-character SHA-256 prefix. `<digest>` is the first 16 hex characters of the SHA-256 of these values joined by NUL:
 
 `EESSI_SOFTWARE_SUBDIR`, `EESSI_ACCEL_SUBDIR`, `LOADEDMODULES`, `MODULEPATH`, `EESSI_INIT_PREFIX`, `EESSI_PROC_CPUINFO`, `PATH`.
 
