@@ -51,7 +51,7 @@ html_theme = "pydata_sphinx_theme"
 html_title = "eessi-arch-guard"
 html_short_title = "eessi-arch-guard"
 html_theme_options = {
-    "github_url": "https://github.com/HaoZeke/eessi-arch-guard",
+    "github_url": "https://github.com/stackhands/eessi-arch-guard",
     "search_bar_text": "Search the docs ...",
     "show_nav_level": 2,
     "navigation_depth": 3,
@@ -65,7 +65,7 @@ html_theme_options = {
     "icon_links": [
         {
             "name": "GitHub",
-            "url": "https://github.com/HaoZeke/eessi-arch-guard",
+            "url": "https://github.com/stackhands/eessi-arch-guard",
             "icon": "fa-brands fa-github",
             "type": "fontawesome",
         },
