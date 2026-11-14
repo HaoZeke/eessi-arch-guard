@@ -51,7 +51,13 @@ pub const Outcome = struct {
 };
 
 /// The decision ran out of time, or SIGTERM arrived; neither is cached.
-pub const Stop = error{ Deadline, Terminated };
+/// Deadline and Terminated stop a decision; Os is an OSError the Python
+/// guard does not catch on the way up, which main reports as a skip, with
+/// its text in `os_failure`.
+pub const Stop = error{ Deadline, Terminated, Os };
+
+/// Python's str() of the OSError behind error.Os: "[Errno N] text".
+pub var os_failure: []const u8 = "";
 
 // ---- the deadline and SIGTERM ------------------------------------------
 
@@ -1086,19 +1092,47 @@ fn writeCache(c: *Ctx, dirfd: sys.fd_t, name: []const u8, o: Outcome) void {
     state.writePrivate(a, dirfd, name, out.items) catch {};
 }
 
+/// _lock_exclusive: wait for the cache lock. Under a deadline the wait
+/// polls and only "would block" waits again, as Python retries only
+/// BlockingIOError; any other flock error is an OSError (error.Os).
 fn lockExclusive(c: *Ctx, fd: sys.fd_t) Stop!void {
     const l = c.limit orelse {
-        state.lockExclusive(fd, null) catch {};
+        state.lockExclusive(fd, null) catch |err| {
+            os_failure = if (common.sys.asError(err)) |e| common.sys.describe(e) else @errorName(err);
+            return error.Os;
+        };
         return;
     };
     while (true) {
         try l.check();
         const rc = linux.flock(fd, std.posix.LOCK.EX | std.posix.LOCK.NB);
-        if (linux.errno(rc) == .SUCCESS) return;
+        switch (linux.errno(rc)) {
+            .SUCCESS => return,
+            .AGAIN, .INTR => {},
+            else => |e| {
+                os_failure = common.sys.describeErrno(e);
+                return error.Os;
+            },
+        }
         const pause = @max(@min(lock_poll_ms, l.remainingMs()), 0);
         var ts: linux.timespec = .{ .sec = 0, .nsec = @intCast(pause * std.time.ns_per_ms) };
         _ = linux.nanosleep(&ts, null);
     }
+}
+
+test "a flock error other than would-block is an OSError, not a wait" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var limit: Limit = .{ .deadline_ms = nowMs() + 60_000 };
+    var c: Ctx = .{ .arena = arena_state.allocator(), .env = .empty, .strict = false, .self_exe = "" };
+    c.limit = &limit;
+    // flock refuses a descriptor opened O_PATH with EBADF.
+    const fd = try sys.openat(fsx.cwd, "/", .{ .PATH = true }, 0);
+    defer sys.close(fd);
+    const start = nowMs();
+    try std.testing.expectError(error.Os, lockExclusive(&c, fd));
+    try std.testing.expect(nowMs() - start < 1000);
+    try std.testing.expectEqualStrings("[Errno 9] Bad file descriptor", os_failure);
 }
 
 pub fn cachedDecide(c: *Ctx, env: Map, shell: bool) Stop!Outcome {
@@ -1121,7 +1155,7 @@ pub fn cachedDecide(c: *Ctx, env: Map, shell: bool) Stop!Outcome {
 }
 
 /// The decision under one deadline. A timeout or SIGTERM is not cached.
-pub fn limitedDecide(c: *Ctx, env: Map, shell: bool, timeout_s: f64) Outcome {
+pub fn limitedDecide(c: *Ctx, env: Map, shell: bool, timeout_s: f64) error{Os}!Outcome {
     var limit: Limit = .{ .deadline_ms = nowMs() + @as(i64, @intFromFloat(@min(timeout_s * 1000.0, 9.2e15))) };
     c.limit = &limit;
     installLimit(&limit);
@@ -1141,5 +1175,6 @@ pub fn limitedDecide(c: *Ctx, env: Map, shell: bool, timeout_s: f64) Outcome {
             return failed(c, was, "timeout", "eessi-arch-guard: decision exceeded the time limit; environment left as it was", null);
         },
         error.Terminated => return failed(c, was, "terminated", "eessi-arch-guard: decision was terminated; environment left as it was", null),
+        error.Os => return error.Os,
     };
 }

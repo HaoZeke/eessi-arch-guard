@@ -443,7 +443,13 @@ fn realMain(arena: Allocator, argv0: []const u8, argv: []const []const u8, envp:
     const t = resolveTimeout(arena, args.timeout, cfg.settings);
     if (t.warning) |w| writeMessage(arena, 2, w);
 
-    const outcome = guard.limitedDecide(&ctx, env, args.shell, t.value);
+    // An OSError the decision does not catch: Python's main reports it as a
+    // skip, after the chained output, and leaves the environment.
+    const outcome = guard.limitedDecide(&ctx, env, args.shell, t.value) catch {
+        writeStdout(chain_out, "");
+        emergencyWrite("OSError", guard.os_failure);
+        return if (args.strict) strict_failure_exit else 0;
+    };
     const announce = !args.shell and std.mem.eql(u8, env.get("SLURM_LOCALID") orelse "0", "0");
     const body = envmap.render(arena, outcome.changes, outcome.message, args.shell, announce) catch |err| {
         writeStdout(chain_out, "");
