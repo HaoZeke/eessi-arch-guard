@@ -497,7 +497,8 @@ fn mkdtemp(c: *Ctx, base: []const u8) ?[]const u8 {
     var tries: usize = 0;
     while (tries < 100) : (tries += 1) {
         var rnd: [8]u8 = undefined;
-        _ = linux.getrandom(&rnd, rnd.len, 0);
+        // A name from bytes getrandom did not fill would not be random.
+        _ = sys.call(linux.getrandom, .{ &rnd, rnd.len, 0 }) catch return null;
         var suffix: [8]u8 = undefined;
         for (rnd, 0..) |b, i| suffix[i] = alphabet[b % alphabet.len];
         const p = c.arena.print("{s}/eessi-arch-guard-{s}", .{ base, suffix }) catch return null;
