@@ -3,8 +3,19 @@
 //! the Python guard works on characters it decoded UTF-8 with
 //! surrogateescape, so an invalid byte counts as one character here too.
 const std = @import("std");
+const common = @import("zig_common");
 
 const Allocator = std.mem.Allocator;
+
+// Python's text handling, shared with the other tools through zig-common.
+const pytext = common.pytext;
+pub const Char = pytext.Char;
+pub const nextChar = pytext.nextChar;
+pub const decodeReplace = pytext.decodeReplace;
+pub const pyWhitespace = pytext.pyWhitespace;
+pub const pyStrip = pytext.pyStrip;
+pub const pySplit = pytext.pySplit;
+pub const shellQuote = pytext.shellQuote;
 
 pub const max_module_name = 256;
 pub const prolog_line_max = 4094;
@@ -129,24 +140,6 @@ pub fn neverCache(name: []const u8) bool {
 
 // ---- characters -------------------------------------------------------
 
-pub const Char = struct {
-    /// The code point, or null for a byte that is not part of valid UTF-8.
-    cp: ?u21,
-    len: u3,
-};
-
-/// The next character of `s` as CPython's UTF-8 decoder sees it: a valid
-/// sequence, or an invalid byte run (the maximal subpart of a sequence,
-/// returned one byte at a time, as surrogateescape replaces it).
-pub fn nextChar(s: []const u8) Char {
-    const c0 = s[0];
-    if (c0 < 0x80) return .{ .cp = c0, .len = 1 };
-    const n: u3 = std.unicode.utf8ByteSequenceLength(c0) catch return .{ .cp = null, .len = 1 };
-    if (s.len < n) return .{ .cp = null, .len = 1 };
-    const cp = std.unicode.utf8Decode(s[0..n]) catch return .{ .cp = null, .len = 1 };
-    return .{ .cp = cp, .len = n };
-}
-
 /// Length of the maximal subpart of an ill-formed sequence at `s` (Unicode
 /// "best practice", which CPython's 'replace' handler follows): the bytes
 /// that one U+FFFD stands for.
@@ -185,71 +178,6 @@ fn maximalSubpart(s: []const u8) usize {
         if (b < l or b > h) break;
     }
     return i;
-}
-
-/// bytes.decode("utf-8", "replace"): each maximal ill-formed subpart becomes
-/// one U+FFFD.
-pub fn decodeReplace(gpa: Allocator, s: []const u8) Allocator.Error![]u8 {
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(gpa);
-    var i: usize = 0;
-    while (i < s.len) {
-        const ch = nextChar(s[i..]);
-        if (ch.cp != null) {
-            try out.appendSlice(gpa, s[i .. i + ch.len]);
-            i += ch.len;
-        } else {
-            try out.appendSlice(gpa, "\u{FFFD}");
-            i += maximalSubpart(s[i..]);
-        }
-    }
-    return out.toOwnedSlice(gpa);
-}
-
-/// str.isspace for the characters str.strip() removes.
-pub fn pyWhitespace(cp: u21) bool {
-    return switch (cp) {
-        ' ', '\t', '\n', 0x0b, 0x0c, '\r', 0x1c...0x1f, 0x85, 0xa0, 0x1680, 0x2000...0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000 => true,
-        else => false,
-    };
-}
-
-/// str.strip(): `s` without leading and trailing Unicode whitespace.
-pub fn pyStrip(s: []const u8) []const u8 {
-    var a: usize = 0;
-    while (a < s.len) {
-        const ch = nextChar(s[a..]);
-        const cp = ch.cp orelse break;
-        if (!pyWhitespace(cp)) break;
-        a += ch.len;
-    }
-    var b: usize = a;
-    var i: usize = a;
-    while (i < s.len) {
-        const ch = nextChar(s[i..]);
-        i += ch.len;
-        const ws = if (ch.cp) |cp| pyWhitespace(cp) else false;
-        if (!ws) b = i;
-    }
-    return s[a..b];
-}
-
-/// str.split() with no separator: the runs between Unicode whitespace.
-pub fn pySplit(arena: Allocator, s: []const u8) Allocator.Error![]const []const u8 {
-    var out: std.ArrayList([]const u8) = .empty;
-    var i: usize = 0;
-    var start: ?usize = null;
-    while (i < s.len) {
-        const ch = nextChar(s[i..]);
-        const ws = if (ch.cp) |cp| pyWhitespace(cp) else false;
-        if (ws) {
-            if (start) |st| try out.append(arena, s[st..i]);
-            start = null;
-        } else if (start == null) start = i;
-        i += ch.len;
-    }
-    if (start) |st| try out.append(arena, s[st..]);
-    return out.items;
 }
 
 /// one_line: controls (below 32 and 127) become spaces, the result is
@@ -310,24 +238,6 @@ pub fn messageBytes(gpa: Allocator, text: []const u8) Allocator.Error![]u8 {
         if (ch.cp == null) try out.append(gpa, '?') else try out.appendSlice(gpa, line[i .. i + ch.len]);
         i += ch.len;
     }
-    return out.toOwnedSlice(gpa);
-}
-
-/// shlex.quote: unchanged when every byte is in [A-Za-z0-9_@%+=:,./-] and
-/// the value is not empty; otherwise single-quoted with ' written as '"'"'.
-pub fn shellQuote(gpa: Allocator, v: []const u8) Allocator.Error![]u8 {
-    if (v.len == 0) return gpa.dupe(u8, "''");
-    const safe = for (v) |c| {
-        if (!(isAlnumU(c) or std.mem.indexOfScalar(u8, "@%+=:,./-", c) != null)) break false;
-    } else true;
-    if (safe) return gpa.dupe(u8, v);
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(gpa);
-    try out.append(gpa, '\'');
-    for (v) |c| {
-        if (c == '\'') try out.appendSlice(gpa, "'\"'\"'") else try out.append(gpa, c);
-    }
-    try out.append(gpa, '\'');
     return out.toOwnedSlice(gpa);
 }
 

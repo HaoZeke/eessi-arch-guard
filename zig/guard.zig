@@ -8,7 +8,7 @@ const linux = std.os.linux;
 const common = @import("zig_common");
 const text = @import("text.zig");
 const envmap = @import("envmap.zig");
-const json = @import("json.zig");
+const json = common.json;
 
 const sys = common.sys;
 const fsx = common.fsx;

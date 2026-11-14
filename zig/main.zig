@@ -473,7 +473,6 @@ pub fn main(init: std.process.Init.Minimal) u8 {
 test {
     _ = text;
     _ = envmap;
-    _ = @import("json.zig");
     _ = guard;
 }
 
