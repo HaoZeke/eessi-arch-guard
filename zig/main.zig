@@ -49,7 +49,7 @@ var emergency_strict = false;
 
 fn emergencyWrite(kind: []const u8, detail: []const u8) void {
     var buf: [1024]u8 = undefined;
-    const msg = std.fmt.bufPrint(&buf, "eessi-arch-guard: skipped, {s}: {s}", .{ kind, detail }) catch "eessi-arch-guard: skipped";
+    const msg = std.mem.print(&buf, "eessi-arch-guard: skipped, {s}: {s}", .{ kind, detail }) catch "eessi-arch-guard: skipped";
     // No allocation here: a crash may have come from the allocator.
     var clean: [1024]u8 = undefined;
     var n: usize = 0;
@@ -263,7 +263,7 @@ fn parseConfigBytes(arena: Allocator, blob: []const u8, bad: *std.ArrayList([]co
         i = if (j + 1 < blob.len and blob[j] == '\r' and blob[j + 1] == '\n') j + 2 else j + 1;
         const line = pyStripBytes(raw);
         if (line.len == 0 or line[0] == '#') continue;
-        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        const eq = std.mem.findScalar(u8, line, '=') orelse continue;
         const key = pyStripBytes(line[0..eq]);
         const value = pyStripBytes(line[eq + 1 ..]);
         if (!std.unicode.utf8ValidateSlice(key) or key.len == 0) continue;
@@ -285,8 +285,8 @@ const errno_text = [_]struct { e: linux.E, s: []const u8 }{
 
 fn osErrorText(arena: Allocator, e: linux.E, path: []const u8) []const u8 {
     for (errno_text) |t| if (t.e == e)
-        return std.fmt.allocPrint(arena, "[Errno {d}] {s}: '{s}'", .{ @backingInt(e), t.s, path }) catch t.s;
-    return std.fmt.allocPrint(arena, "[Errno {d}] Unknown error {d}: '{s}'", .{ @backingInt(e), @backingInt(e), path }) catch "error";
+        return arena.print("[Errno {d}] {s}: '{s}'", .{ @backingInt(e), t.s, path }) catch t.s;
+    return arena.print("[Errno {d}] Unknown error {d}: '{s}'", .{ @backingInt(e), @backingInt(e), path }) catch "error";
 }
 
 fn lstatRaw(path: []const u8, x: *linux.Statx) linux.E {
@@ -300,12 +300,12 @@ fn lstatRaw(path: []const u8, x: *linux.Statx) linux.E {
 fn configUntrusted(arena: Allocator, path: []const u8) ?[]const u8 {
     var x: linux.Statx = undefined;
     const e = lstatRaw(path, &x);
-    if (e != .SUCCESS) return std.fmt.allocPrint(arena, "{s} ({s})", .{ path, osErrorText(arena, e, path) }) catch path;
+    if (e != .SUCCESS) return arena.print("{s} ({s})", .{ path, osErrorText(arena, e, path) }) catch path;
     const fmt_bits = @as(u32, x.mode) & fsx.S.IFMT;
-    if (fmt_bits == fsx.S.IFLNK) return std.fmt.allocPrint(arena, "{s} is a symlink and is ignored", .{path}) catch path;
-    if (fmt_bits != fsx.S.IFREG) return std.fmt.allocPrint(arena, "{s} is not a regular file and is ignored", .{path}) catch path;
-    if (x.uid != 0) return std.fmt.allocPrint(arena, "{s} is not owned by root and is ignored", .{path}) catch path;
-    if (x.mode & 0o022 != 0) return std.fmt.allocPrint(arena, "{s} is writable by group or others and is ignored", .{path}) catch path;
+    if (fmt_bits == fsx.S.IFLNK) return arena.print("{s} is a symlink and is ignored", .{path}) catch path;
+    if (fmt_bits != fsx.S.IFREG) return arena.print("{s} is not a regular file and is ignored", .{path}) catch path;
+    if (x.uid != 0) return arena.print("{s} is not owned by root and is ignored", .{path}) catch path;
+    if (x.mode & 0o022 != 0) return arena.print("{s} is writable by group or others and is ignored", .{path}) catch path;
     return null;
 }
 
@@ -321,20 +321,20 @@ fn siteConfig(arena: Allocator, invoked: []const u8) Config {
     for ([_][]const u8{ "/etc/eessi-arch-guard.conf", beside }) |path| {
         if (!exists(path)) continue;
         if (configUntrusted(arena, path)) |reason|
-            return .{ .warning = std.fmt.allocPrint(arena, "eessi-arch-guard: config ignored: {s}", .{reason}) catch null };
+            return .{ .warning = arena.print("eessi-arch-guard: config ignored: {s}", .{reason}) catch null };
         // Checked again on the open file, without following a link.
         const f = fsx.openRegular(fsx.cwd, path, false) catch |err|
-            return .{ .warning = std.fmt.allocPrint(arena, "eessi-arch-guard: config ignored: {s}: {t}", .{ path, err }) catch null };
+            return .{ .warning = arena.print("eessi-arch-guard: config ignored: {s}: {t}", .{ path, err }) catch null };
         defer sys.close(f.fd);
         if (f.stat.uid != 0 or f.stat.mode & 0o022 != 0)
-            return .{ .warning = std.fmt.allocPrint(arena, "eessi-arch-guard: config ignored: {s} changed while it was read", .{path}) catch null };
+            return .{ .warning = arena.print("eessi-arch-guard: config ignored: {s} changed while it was read", .{path}) catch null };
         const blob = fsx.readAll(arena, f.fd, 1 << 20) catch |err|
-            return .{ .warning = std.fmt.allocPrint(arena, "eessi-arch-guard: config ignored: {s}: {t}", .{ path, err }) catch null };
+            return .{ .warning = arena.print("eessi-arch-guard: config ignored: {s}: {t}", .{ path, err }) catch null };
         var bad: std.ArrayList([]const u8) = .empty;
         const settings = parseConfigBytes(arena, blob, &bad) catch return .{};
         if (bad.items.len > 0) {
             const shown = std.mem.join(arena, " ", bad.items) catch "";
-            return .{ .settings = settings, .warning = std.fmt.allocPrint(arena, "eessi-arch-guard: config value kept with its original bytes: {s}", .{shown}) catch null };
+            return .{ .settings = settings, .warning = arena.print("eessi-arch-guard: config value kept with its original bytes: {s}", .{shown}) catch null };
         }
         return .{ .settings = settings };
     }
@@ -377,7 +377,7 @@ fn writeStdout(chain_out: []const u8, body: []const u8) void {
 /// The path this program was started as, for the config beside it: argv[0]
 /// when it names a path, else /proc/self/exe.
 fn invokedPath(arena: Allocator, argv0: []const u8) []const u8 {
-    if (std.mem.indexOfScalar(u8, argv0, '/') != null) {
+    if (std.mem.findScalar(u8, argv0, '/') != null) {
         if (argv0[0] == '/') return argv0;
         var rb: [sys.path_max]u8 = undefined;
         const cwd = fsx.realpath(fsx.cwd, ".", &rb) catch return argv0;
@@ -424,7 +424,7 @@ fn realMain(arena: Allocator, argv0: []const u8, argv: []const []const u8, envp:
                 if (ch.len == 0) {
                     chain = null;
                 } else if (!chainPathOk(ch)) {
-                    notes.append(arena, std.fmt.allocPrint(arena, "eessi-arch-guard: config chain is not an absolute executable: {s}", .{text.oneLine(arena, ch, 200) catch ch}) catch "") catch oom();
+                    notes.append(arena, arena.print("eessi-arch-guard: config chain is not an absolute executable: {s}", .{text.oneLine(arena, ch, 200) catch ch}) catch "") catch oom();
                     chain = null;
                 }
             }

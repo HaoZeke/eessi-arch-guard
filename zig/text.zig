@@ -75,7 +75,7 @@ pub fn accelSubdir(s: []const u8) bool {
 /// safe_rel_subdir: relative, no empty, '.', '..' or backslash; each
 /// segment [A-Za-z0-9_.+-]+.
 pub fn safeRelSubdir(s: []const u8) bool {
-    if (s.len == 0 or s[0] == '/' or std.mem.indexOfScalar(u8, s, '\\') != null) return false;
+    if (s.len == 0 or s[0] == '/' or std.mem.findScalar(u8, s, '\\') != null) return false;
     var it = std.mem.splitScalar(u8, s, '/');
     while (it.next()) |seg| {
         if (seg.len == 0 or std.mem.eql(u8, seg, ".") or std.mem.eql(u8, seg, "..")) return false;
@@ -94,7 +94,7 @@ pub fn safeAbsolute(s: []const u8) bool {
 }
 
 pub fn hasLineBreakOrNul(s: []const u8) bool {
-    return std.mem.indexOfAny(u8, s, "\n\r\x00") != null;
+    return std.mem.findAny(u8, s, "\n\r\x00") != null;
 }
 
 /// _SAFE_COMPONENT_RE: ^[A-Za-z0-9._-]{1,64}$
@@ -105,8 +105,8 @@ pub fn safeComponent(s: []const u8) bool {
 }
 
 pub fn valueEmitOk(v: []const u8, multiline: bool) bool {
-    if (std.mem.indexOfScalar(u8, v, 0) != null) return false;
-    if (!multiline and std.mem.indexOfAny(u8, v, "\n\r") != null) return false;
+    if (std.mem.findScalar(u8, v, 0) != null) return false;
+    if (!multiline and std.mem.findAny(u8, v, "\n\r") != null) return false;
     return true;
 }
 

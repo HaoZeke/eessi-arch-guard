@@ -19,7 +19,7 @@ pub fn fromEnvp(arena: Allocator, envp: common.proc.Envp) Allocator.Error!Map {
     var i: usize = 0;
     while (envp[i]) |p| : (i += 1) {
         const entry = std.mem.span(p);
-        const eq = std.mem.indexOfScalar(u8, entry, '=') orelse continue;
+        const eq = std.mem.findScalar(u8, entry, '=') orelse continue;
         const r = try m.getOrPut(arena, entry[0..eq]);
         if (!r.found_existing) r.value_ptr.* = entry[eq + 1 ..];
     }
@@ -38,7 +38,7 @@ pub fn toEnvp(arena: Allocator, m: Map) (Allocator.Error || error{InvalidArgumen
     while (it.next()) |kv| : (i += 1) {
         const k = kv.key_ptr.*;
         const v = kv.value_ptr.*;
-        if (std.mem.indexOfScalar(u8, k, 0) != null or std.mem.indexOfScalar(u8, v, 0) != null) return error.InvalidArgument;
+        if (std.mem.findScalar(u8, k, 0) != null or std.mem.findScalar(u8, v, 0) != null) return error.InvalidArgument;
         const e = try arena.allocSentinel(u8, k.len + 1 + v.len, 0);
         @memcpy(e[0..k.len], k);
         e[k.len] = '=';

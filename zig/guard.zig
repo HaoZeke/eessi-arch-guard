@@ -139,7 +139,7 @@ pub const Ran = struct {
 /// (os.defpath when it has none), as subprocess does; a name with '/' is a
 /// path.
 fn resolve(c: *Ctx, name: []const u8, env: Map) ?[]const u8 {
-    if (std.mem.indexOfScalar(u8, name, '/') != null) {
+    if (std.mem.findScalar(u8, name, '/') != null) {
         if (name[0] == '/') return name;
         var rb: [sys.path_max]u8 = undefined;
         const cwd = fsx.realpath(fsx.cwd, ".", &rb) catch return null;
@@ -151,7 +151,7 @@ fn resolve(c: *Ctx, name: []const u8, env: Map) ?[]const u8 {
 
 /// The message subprocess raises for a program that cannot be found.
 fn notFound(c: *Ctx, name: []const u8) []const u8 {
-    return std.fmt.allocPrint(c.arena, "[Errno 2] No such file or directory: '{s}'", .{name}) catch "could not start";
+    return c.arena.print("[Errno 2] No such file or directory: '{s}'", .{name}) catch "could not start";
 }
 
 /// run_captured: under the decision limit with `new_session`, the child's
@@ -284,7 +284,7 @@ fn charCount(s: []const u8) usize {
 
 /// parse_cpu_line: exactly one non-empty line without controls, split at ':'.
 fn parseCpuLine(arena: Allocator, stdout: []const u8) Allocator.Error!?[]const []const u8 {
-    if (std.mem.indexOfScalar(u8, stdout, 0) != null or charCount(stdout) > max_arch_stdout) return null;
+    if (std.mem.findScalar(u8, stdout, 0) != null or charCount(stdout) > max_arch_stdout) return null;
     var nonempty: std.ArrayList([]const u8) = .empty;
     for (try splitLines(arena, stdout)) |l| if (l.len > 0) try nonempty.append(arena, l);
     if (nonempty.items.len != 1) return null;
@@ -330,7 +330,7 @@ fn readCpuFlags(arena: Allocator, path: []const u8) []const []const u8 {
 }
 
 fn candidateSupportsCpu(candidate: []const u8, flags: []const []const u8) bool {
-    const leaf = candidate[if (std.mem.lastIndexOfScalar(u8, candidate, '/')) |i| i + 1 else 0..];
+    const leaf = candidate[if (std.mem.findScalarLast(u8, candidate, '/')) |i| i + 1 else 0..];
     var buf: [128]u8 = undefined;
     if (leaf.len > buf.len) return true;
     const march = buf[0..leaf.len];
@@ -358,10 +358,10 @@ pub fn probeCpu(c: *Ctx, env: Map) Stop!CpuProbe {
     var why: []const u8 = "";
     const r = runBash(c, &.{ script, "-a", "cpupath" }, env, &why) catch |err| switch (err) {
         error.Deadline, error.Terminated => |e| return e,
-        else => return .{ .status = .@"error", .err = std.fmt.allocPrint(c.arena, "could not run archdetect: {s}", .{why}) catch "could not run archdetect" },
+        else => return .{ .status = .@"error", .err = c.arena.print("could not run archdetect: {s}", .{why}) catch "could not run archdetect" },
     };
     if (r.code != 0) {
-        const detail = firstLine(decodeReplace(c, r.stderr)) orelse (std.fmt.allocPrint(c.arena, "exit {d}", .{exitShown(r.code)}) catch "exit");
+        const detail = firstLine(decodeReplace(c, r.stderr)) orelse (c.arena.print("exit {d}", .{exitShown(r.code)}) catch "exit");
         return .{ .status = .@"error", .err = line1(c, detail, 200) };
     }
     const parsed = (parseCpuLine(c.arena, decodeReplace(c, r.stdout)) catch null) orelse
@@ -406,12 +406,12 @@ pub fn probeAccel(c: *Ctx, env: Map) Stop!AccelProbe {
     var why: []const u8 = "";
     const r = runBash(c, &.{ script, "accelpath" }, env, &why) catch |err| switch (err) {
         error.Deadline, error.Terminated => |e| return e,
-        else => return .{ .status = .@"error", .err = std.fmt.allocPrint(c.arena, "could not run archdetect: {s}", .{why}) catch "could not run archdetect" },
+        else => return .{ .status = .@"error", .err = c.arena.print("could not run archdetect: {s}", .{why}) catch "could not run archdetect" },
     };
     if (r.code != 0) return .{ .status = .none };
     const out = text.pyStrip(decodeReplace(c, r.stdout));
     if (out.len == 0) return .{ .status = .none };
-    if (std.mem.indexOfAny(u8, out, "\n\r") != null or !text.accelSubdir(out))
+    if (std.mem.findAny(u8, out, "\n\r") != null or !text.accelSubdir(out))
         return .{ .status = .@"error", .err = "accelpath output is not an accelerator subdirectory" };
     return .{ .status = .ok, .subdir = out };
 }
@@ -500,7 +500,7 @@ fn mkdtemp(c: *Ctx, base: []const u8) ?[]const u8 {
         _ = linux.getrandom(&rnd, rnd.len, 0);
         var suffix: [8]u8 = undefined;
         for (rnd, 0..) |b, i| suffix[i] = alphabet[b % alphabet.len];
-        const p = std.fmt.allocPrint(c.arena, "{s}/eessi-arch-guard-{s}", .{ base, suffix }) catch return null;
+        const p = c.arena.print("{s}/eessi-arch-guard-{s}", .{ base, suffix }) catch return null;
         var zb: [sys.path_max:0]u8 = undefined;
         const z = sys.z(&zb, p) catch return null;
         switch (linux.errno(linux.mkdirat(linux.AT.FDCWD, z.ptr, 0o700))) {
@@ -545,7 +545,7 @@ fn callRestore(c: *Ctx, env: Map, eessi: []const u8, modules: []const []const u8
     buildRequest(c, &req, env, eessi, modules) catch return .{ .ok = false, .err = "out of memory" };
     var why: []const u8 = "";
     const base = restoreWorkBase(c, env, &why) catch
-        return .{ .ok = false, .err = std.fmt.allocPrint(a, "restore workspace unavailable: {s}", .{why}) catch "restore workspace unavailable" };
+        return .{ .ok = false, .err = a.print("restore workspace unavailable: {s}", .{why}) catch "restore workspace unavailable" };
     const work = mkdtemp(c, base) orelse return .{ .ok = false, .err = "restore workspace unavailable: could not create a directory" };
     defer rmtree(c, work);
     var clean: Map = .empty;
@@ -560,7 +560,7 @@ fn callRestore(c: *Ctx, env: Map, eessi: []const u8, modules: []const []const u8
     if (c.strict) argv.append(a, "--strict") catch main_mod.oom();
     const r = runCaptured(c, argv.items, clean, req.items, c.limit != null, &why) catch |err| switch (err) {
         error.Deadline, error.Terminated => |e| return e,
-        else => return .{ .ok = false, .err = std.fmt.allocPrint(a, "could not start restore helper: {s}", .{why}) catch "could not start restore helper" },
+        else => return .{ .ok = false, .err = a.print("could not start restore helper: {s}", .{why}) catch "could not start restore helper" },
     };
     if (r.code != 0 or r.stdout.len == 0) {
         const e = decodeReplace(c, r.stderr);
@@ -624,7 +624,7 @@ fn parseEnv0(c: *Ctx, blob: []const u8) Map {
     var m: Map = .empty;
     var it = std.mem.splitScalar(u8, blob, 0);
     while (it.next()) |part| {
-        const eq = std.mem.indexOfScalar(u8, part, '=') orelse continue;
+        const eq = std.mem.findScalar(u8, part, '=') orelse continue;
         m.put(c.arena, part[0..eq], part[eq + 1 ..]) catch main_mod.oom();
     }
     return m;
@@ -656,7 +656,7 @@ fn sourceExports(c: *Ctx, module_env: Map, script: []const u8, raised: *[]const 
     };
     if (r.code != 0) {
         const e = decodeReplace(c, r.stderr);
-        return .{ .env = null, .err = if (e.len > 0) e else std.fmt.allocPrint(c.arena, "apply exited {d}", .{exitShown(r.code)}) catch "apply failed" };
+        return .{ .env = null, .err = if (e.len > 0) e else c.arena.print("apply exited {d}", .{exitShown(r.code)}) catch "apply failed" };
     }
     return .{ .env = parseEnv0(c, r.stdout), .err = "" };
 }
@@ -784,7 +784,7 @@ pub fn restoreMain(c: *Ctx) u8 {
     }
     var raised: []const u8 = "";
     const reply = doRestore(c, payload, &raised) catch {
-        const msg = std.fmt.allocPrint(a, "eessi-arch-guard: restore failed: {s}\n", .{line1(c, raised, 300)}) catch "eessi-arch-guard: restore failed\n";
+        const msg = a.print("eessi-arch-guard: restore failed: {s}\n", .{line1(c, raised, 300)}) catch "eessi-arch-guard: restore failed\n";
         writeErr(msg);
         return 1;
     };
@@ -824,7 +824,7 @@ fn side(s: []const u8) []const u8 {
 
 fn failed(c: *Ctx, was: []const u8, now: []const u8, message: []const u8, detail: ?[]const u8) Outcome {
     var ch: Changes = .empty;
-    const token = std.fmt.allocPrint(c.arena, "{s}->{s}", .{ side(was), side(now) }) catch "unrecognized->unrecognized";
+    const token = c.arena.print("{s}->{s}", .{ side(was), side(now) }) catch "unrecognized->unrecognized";
     ch.put(c.arena, "EESSI_ARCH_GUARD_FAILED", token) catch main_mod.oom();
     return .{
         .changes = ch,
@@ -835,7 +835,7 @@ fn failed(c: *Ctx, was: []const u8, now: []const u8, message: []const u8, detail
 }
 
 fn fmt(c: *Ctx, comptime f: []const u8, args: anytype) []const u8 {
-    return std.fmt.allocPrint(c.arena, f, args) catch "eessi-arch-guard: out of memory";
+    return c.arena.print(f, args) catch "eessi-arch-guard: out of memory";
 }
 
 const Loaded = struct { eessi: []const u8 = "", others: []const []const u8 = &.{}, err: []const u8 = "" };
@@ -999,7 +999,7 @@ fn cachePath(c: *Ctx, env: Map, shell: bool) ?CachePath {
     var uts: linux.utsname = undefined;
     _ = linux.uname(&uts);
     const node = std.mem.sliceTo(&uts.nodename, 0);
-    const name = std.fmt.allocPrint(c.arena, ".eessi-arch-guard.{d}.{s}.{s}.{s}.{s}.{s}", .{
+    const name = c.arena.print(".eessi-arch-guard.{d}.{s}.{s}.{s}.{s}.{s}", .{
         sys.getuid(),
         safeComponent(c, node),
         safeComponent(c, job),
@@ -1032,7 +1032,7 @@ fn readCache(c: *Ctx, dirfd: sys.fd_t, name: []const u8, shell: bool) ?Outcome {
         .null => {},
         .string => |s| {
             const t = json.decodeCache(a, s) catch return null;
-            if (std.mem.indexOfAny(u8, t, "\n\r\x00") != null) return null;
+            if (std.mem.findAny(u8, t, "\n\r\x00") != null) return null;
             message = t;
         },
         else => return null,
@@ -1147,7 +1147,7 @@ pub fn cachedDecide(c: *Ctx, env: Map, shell: bool) Stop!Outcome {
     const p = cachePath(c, env, shell) orelse return decide(c, env, shell);
     const dirfd = fsx.openDir(fsx.cwd, p.dir, true) catch return decide(c, env, shell);
     defer sys.close(dirfd);
-    const lock_name = std.fmt.allocPrint(c.arena, "{s}.lock", .{p.name}) catch return decide(c, env, shell);
+    const lock_name = c.arena.print("{s}.lock", .{p.name}) catch return decide(c, env, shell);
     // A lock file someone else made is neither locked on nor changed:
     // decide without the cache.
     const lockfd = (state.openPrivate(dirfd, lock_name, true) catch return decide(c, env, shell)) orelse return decide(c, env, shell);
