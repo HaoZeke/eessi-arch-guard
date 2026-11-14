@@ -32,6 +32,10 @@ jobs:
         run: |
           zig build -Drelease=true -Dtarget=${{ matrix.arch }}-linux-musl --prefix out
           # --version prints the bare version, as the Python guard does.
+          zon=$(sed -nE 's/^ *\.version = "([^"]+)".*/\1/p' build.zig.zon)
+          if [ "${zon}" != "${GITHUB_REF_NAME#v}" ]; then
+            echo "versions: tag ${GITHUB_REF_NAME}, build.zig.zon ${zon}"; exit 1
+          fi
           got=$(out/bin/eessi-arch-guard --version)
           py=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/eessi_arch_guard.py)
           if [ "${got}" != "${GITHUB_REF_NAME#v}" ] || [ "${py}" != "${got}" ]; then
@@ -53,6 +57,17 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # The release notes are the tag's section of CHANGELOG.md, "## X.Y.Z"
+      # or "## [X.Y.Z] - date"; a tag without one is not released.
+      - name: release notes from CHANGELOG.md
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '/^## /{ if (on) exit; h = $0; sub(/^## \[?/, "", h); sub(/[] ].*$/, "", h); on = (h == v); next } on' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then echo "CHANGELOG.md has no section for ${v}"; exit 1; fi
+          cat release-notes.md
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: bin-*
@@ -65,4 +80,4 @@ jobs:
       - name: release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes-file /dev/null --draft
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes-file release-notes.md --draft
