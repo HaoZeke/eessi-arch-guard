@@ -258,7 +258,7 @@ pub fn oneLine(gpa: Allocator, s: []const u8, limit: usize) Allocator.Error![]u8
     var chars: std.ArrayList(struct { start: usize, len: usize, space: bool }) = .empty;
     defer chars.deinit(gpa);
     var buf: std.ArrayList(u8) = .empty;
-    errdefer buf.deinit(gpa);
+    defer buf.deinit(gpa);
     var i: usize = 0;
     while (i < s.len) {
         const ch = nextChar(s[i..]);
@@ -290,7 +290,6 @@ pub fn oneLine(gpa: Allocator, s: []const u8, limit: usize) Allocator.Error![]u8
     } else {
         for (kept) |c| try out.appendSlice(gpa, buf.items[c.start .. c.start + c.len]);
     }
-    buf.deinit(gpa);
     return out.toOwnedSlice(gpa);
 }
 
