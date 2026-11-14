@@ -102,8 +102,14 @@ fn onCrash(sig: linux.SIG) callconv(.c) void {
     });
 }
 
+/// The stack the crash handlers run on: a SIGSEGV from a stack overflow
+/// has no stack left to run a handler on the thread's own.
+var crash_stack: [64 * 1024]u8 align(16) = undefined;
+
 fn installCrashHandlers() void {
-    var act: linux.Sigaction = .{ .handler = .{ .handler = onCrash }, .mask = linux.sigemptyset(), .flags = 0 };
+    const alt: linux.stack_t = .{ .sp = &crash_stack, .flags = 0, .size = crash_stack.len };
+    const on_stack = linux.errno(linux.sigaltstack(&alt, null)) == .SUCCESS;
+    var act: linux.Sigaction = .{ .handler = .{ .handler = onCrash }, .mask = linux.sigemptyset(), .flags = if (on_stack) linux.SA.ONSTACK else 0 };
     for ([_]linux.SIG{ .SEGV, .BUS, .ILL, .FPE }) |s| _ = linux.sigaction(s, &act, null);
     // A closed stdout must not kill the prolog: writes fail instead.
     var ign: linux.Sigaction = .{ .handler = .{ .handler = linux.SIG.IGN }, .mask = linux.sigemptyset(), .flags = 0 };
