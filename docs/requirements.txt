@@ -14,12 +14,13 @@ mdit-py-plugins==0.6.1
 mdurl==0.1.2
 myst-parser==5.1.0
 packaging==26.3
-pydata-sphinx-theme==0.24.0
+pygments-styles==0.3.0
 Pygments==2.21.0
 PyYAML==6.0.3
 requests==2.34.2
-roman-numerals==4.1.0
 roman-numerals-py==4.1.0
+roman-numerals==4.1.0
+shibuya==2025.12.13
 snowballstemmer==3.1.1
 soupsieve==4.1
 Sphinx==8.2.3

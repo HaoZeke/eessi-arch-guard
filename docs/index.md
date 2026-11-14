@@ -1,5 +1,17 @@
 # eessi-arch-guard
 
+```{image} _static/logo-light.svg
+:alt: eessi-arch-guard
+:width: 420px
+:class: only-light
+```
+
+```{image} _static/logo-dark.svg
+:alt: eessi-arch-guard
+:width: 420px
+:class: only-dark
+```
+
 eessi-arch-guard is a Slurm TaskProlog that reloads an EESSI module stack when the task runs on a CPU or GPU other than the target recorded at `module load`. The EESSI module chooses that target once. Lmod keeps the recorded `MODULEPATH` and the `EBROOT*` paths until the stack is purged and loaded again. The prolog does that purge and load on the compute node, before `execve`, and prints the environment delta for `slurmstepd` to apply.
 
 Version {{ version }}.
