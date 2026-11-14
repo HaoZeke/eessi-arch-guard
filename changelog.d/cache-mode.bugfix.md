@@ -1,1 +1,0 @@
-The decision cache is kept per output mode. A batch script that runs `--shell` after the task prolog no longer gets the prolog's cached result, such as a failure for a value with a newline that `--shell` can carry, and a prolog no longer reuses a `--shell` result.
