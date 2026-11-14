@@ -41,7 +41,6 @@ autoclass_content = "class"
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
-    "eb-stack": ("https://eb-stack.rgoswami.me/", None),
 }
 
 templates_path = ["_templates"]
