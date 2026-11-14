@@ -67,9 +67,23 @@ fn emergencyWrite(kind: []const u8, detail: []const u8) void {
     }
 }
 
+/// Output a chained prolog gave and that is not yet written: Python's main
+/// writes it before the skip line, so an emergency does too.
+var emergency_chain: []const u8 = "";
+
+/// Python's main on an uncaught exception: stop any command the decision
+/// started, write the chained output, then the skip line, and exit 0 (or
+/// the strict status).
 fn emergencyExit(kind: []const u8, detail: []const u8) noreturn {
+    guard.stopChild();
+    if (emergency_chain.len > 0) writeStdout(emergency_chain, "");
     emergencyWrite(kind, detail);
     linux.exit_group(if (emergency_strict) strict_failure_exit else 0);
+}
+
+/// Out of memory, as a MemoryError reaching Python's main.
+pub fn oom() noreturn {
+    emergencyExit("MemoryError", "out of memory");
 }
 
 pub const panic = std.debug.FullPanic(struct {
@@ -336,10 +350,10 @@ fn resolveTimeout(arena: Allocator, cli_text: ?[]const u8, settings: ?Settings) 
     var chosen = default_timeout;
     var warnings: std.ArrayList([]const u8) = .empty;
     if (settings) |s| if (s.get("timeout")) |t| {
-        if (parseTimeout(arena, t)) |v| chosen = v else warnings.append(arena, "eessi-arch-guard: config timeout is not a positive number of seconds at most " ++ timeout_max_text) catch {};
+        if (parseTimeout(arena, t)) |v| chosen = v else warnings.append(arena, "eessi-arch-guard: config timeout is not a positive number of seconds at most " ++ timeout_max_text) catch oom();
     };
     if (cli_text) |t| {
-        if (parseTimeout(arena, t)) |v| chosen = v else warnings.append(arena, "eessi-arch-guard: --timeout is not a positive number of seconds at most " ++ timeout_max_text) catch {};
+        if (parseTimeout(arena, t)) |v| chosen = v else warnings.append(arena, "eessi-arch-guard: --timeout is not a positive number of seconds at most " ++ timeout_max_text) catch oom();
     }
     if (warnings.items.len == 0) return .{ .value = chosen, .warning = null };
     return .{ .value = chosen, .warning = std.mem.join(arena, " ", warnings.items) catch null };
@@ -352,6 +366,7 @@ fn writeMessage(arena: Allocator, fd: sys.fd_t, msg: []const u8) void {
 }
 
 fn writeStdout(chain_out: []const u8, body: []const u8) void {
+    emergency_chain = "";
     if (chain_out.len > 0) {
         cli.put(1, chain_out);
         if (chain_out[chain_out.len - 1] != '\n') cli.put(1, "\n");
@@ -399,7 +414,7 @@ fn realMain(arena: Allocator, argv0: []const u8, argv: []const []const u8, envp:
     var chain_out: []const u8 = "";
     const cfg = siteConfig(arena, invokedPath(arena, argv0));
     var notes: std.ArrayList([]const u8) = .empty;
-    if (cfg.warning) |w| notes.append(arena, w) catch {};
+    if (cfg.warning) |w| notes.append(arena, w) catch oom();
     var chain: ?[]const u8 = null;
     if (!args.shell) {
         chain = args.chain;
@@ -409,12 +424,12 @@ fn realMain(arena: Allocator, argv0: []const u8, argv: []const []const u8, envp:
                 if (ch.len == 0) {
                     chain = null;
                 } else if (!chainPathOk(ch)) {
-                    notes.append(arena, std.fmt.allocPrint(arena, "eessi-arch-guard: config chain is not an absolute executable: {s}", .{text.oneLine(arena, ch, 200) catch ch}) catch "") catch {};
+                    notes.append(arena, std.fmt.allocPrint(arena, "eessi-arch-guard: config chain is not an absolute executable: {s}", .{text.oneLine(arena, ch, 200) catch ch}) catch "") catch oom();
                     chain = null;
                 }
             }
         } else if (!chainPathOk(chain.?)) {
-            notes.append(arena, "eessi-arch-guard: --chain is not an absolute executable") catch {};
+            notes.append(arena, "eessi-arch-guard: --chain is not an absolute executable") catch oom();
             chain = null;
         }
     }
@@ -434,6 +449,7 @@ fn realMain(arena: Allocator, argv0: []const u8, argv: []const []const u8, envp:
             .signaled => 1,
         };
         chain_out = r.stdout;
+        emergency_chain = chain_out;
         if (code != 0) {
             writeStdout(chain_out, "");
             return code;

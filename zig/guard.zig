@@ -6,6 +6,7 @@
 const std = @import("std");
 const linux = std.os.linux;
 const common = @import("zig_common");
+const main_mod = @import("main.zig");
 const text = @import("text.zig");
 const envmap = @import("envmap.zig");
 const json = common.json;
@@ -80,6 +81,13 @@ pub const Limit = struct {
 };
 
 var active_limit: ?*Limit = null;
+
+/// Stop the process group of a command the decision is running, if any,
+/// before an emergency exit; system calls only, safe in a handler.
+pub fn stopChild() void {
+    const l = active_limit orelse return;
+    common.proc.stopGroup(l.child_pgid.load(.seq_cst));
+}
 
 fn onTerm(_: linux.SIG) callconv(.c) void {
     const l = active_limit orelse return;
@@ -359,7 +367,7 @@ pub fn probeCpu(c: *Ctx, env: Map) Stop!CpuProbe {
     const parsed = (parseCpuLine(c.arena, decodeReplace(c, r.stdout)) catch null) orelse
         return .{ .status = .@"error", .err = "cpupath output is not a single line" };
     var cands: std.ArrayList([]const u8) = .empty;
-    for (parsed) |p| if (p.len > 0) cands.append(c.arena, p) catch {};
+    for (parsed) |p| if (p.len > 0) cands.append(c.arena, p) catch main_mod.oom();
     if (cands.items.len == 0) return .{ .status = .@"error", .err = "cpupath returned no candidates" };
     for (cands.items) |cand| if (!text.safeRelSubdir(cand))
         return .{ .status = .@"error", .candidates = cands.items, .err = "cpupath returned an unsafe candidate" };
@@ -369,7 +377,7 @@ pub fn probeCpu(c: *Ctx, env: Map) Stop!CpuProbe {
     };
     const flags = readCpuFlags(c.arena, cpuinfo);
     var compatible: std.ArrayList([]const u8) = .empty;
-    for (cands.items) |cand| if (candidateSupportsCpu(cand, flags)) compatible.append(c.arena, cand) catch {};
+    for (cands.items) |cand| if (candidateSupportsCpu(cand, flags)) compatible.append(c.arena, cand) catch main_mod.oom();
     const chosen = installed(c, prefix, os_type, compatible.items);
     const raw = installed(c, prefix, os_type, cands.items);
     const override = if (chosen.len > 0 and !std.mem.eql(u8, chosen, raw)) chosen else "";
@@ -541,15 +549,15 @@ fn callRestore(c: *Ctx, env: Map, eessi: []const u8, modules: []const []const u8
     const work = mkdtemp(c, base) orelse return .{ .ok = false, .err = "restore workspace unavailable: could not create a directory" };
     defer rmtree(c, work);
     var clean: Map = .empty;
-    clean.put(a, "PATH", "/usr/bin:/bin") catch {};
-    clean.put(a, "LC_ALL", "C") catch {};
-    clean.put(a, "LANG", "C") catch {};
-    clean.put(a, "HOME", work) catch {};
-    clean.put(a, "TMPDIR", work) catch {};
-    clean.put(a, "EESSI_ARCH_GUARD_WORKDIR", work) catch {};
+    clean.put(a, "PATH", "/usr/bin:/bin") catch main_mod.oom();
+    clean.put(a, "LC_ALL", "C") catch main_mod.oom();
+    clean.put(a, "LANG", "C") catch main_mod.oom();
+    clean.put(a, "HOME", work) catch main_mod.oom();
+    clean.put(a, "TMPDIR", work) catch main_mod.oom();
+    clean.put(a, "EESSI_ARCH_GUARD_WORKDIR", work) catch main_mod.oom();
     var argv: std.ArrayList([]const u8) = .empty;
-    argv.appendSlice(a, &.{ c.self_exe, "--restore" }) catch {};
-    if (c.strict) argv.append(a, "--strict") catch {};
+    argv.appendSlice(a, &.{ c.self_exe, "--restore" }) catch main_mod.oom();
+    if (c.strict) argv.append(a, "--strict") catch main_mod.oom();
     const r = runCaptured(c, argv.items, clean, req.items, c.limit != null, &why) catch |err| switch (err) {
         error.Deadline, error.Terminated => |e| return e,
         else => return .{ .ok = false, .err = std.fmt.allocPrint(a, "could not start restore helper: {s}", .{why}) catch "could not start restore helper" },
@@ -563,7 +571,7 @@ fn callRestore(c: *Ctx, env: Map, eessi: []const u8, modules: []const []const u8
     if (data.get("missing")) |m| if (m == .array) for (m.array) |item| {
         if (item != .string) continue;
         const name = json.decodeCache(a, item.string) catch continue;
-        if (text.moduleName(name)) missing.append(a, name) catch {};
+        if (text.moduleName(name)) missing.append(a, name) catch main_mod.oom();
     };
     const ok = if (data.get("ok")) |v| v == .bool and v.bool else false;
     if (!ok) {
@@ -577,7 +585,7 @@ fn callRestore(c: *Ctx, env: Map, eessi: []const u8, modules: []const []const u8
         const k = json.decodeWire(a, mem.key) catch return .{ .ok = false, .missing = missing.items, .err = "restore helper returned no environment" };
         if (mem.value != .string) return .{ .ok = false, .missing = missing.items, .err = "restore helper returned no environment" };
         const v = json.decodeWire(a, mem.value.string) catch return .{ .ok = false, .missing = missing.items, .err = "restore helper returned no environment" };
-        m.put(a, k, v) catch {};
+        m.put(a, k, v) catch main_mod.oom();
     }
     return .{ .ok = true, .env = m, .missing = missing.items };
 }
@@ -617,7 +625,7 @@ fn parseEnv0(c: *Ctx, blob: []const u8) Map {
     var it = std.mem.splitScalar(u8, blob, 0);
     while (it.next()) |part| {
         const eq = std.mem.indexOfScalar(u8, part, '=') orelse continue;
-        m.put(c.arena, part[0..eq], part[eq + 1 ..]) catch {};
+        m.put(c.arena, part[0..eq], part[eq + 1 ..]) catch main_mod.oom();
     }
     return m;
 }
@@ -672,16 +680,16 @@ fn diagnose(c: *Ctx, original: Map, lmod: []const u8, eessi: []const u8, modules
     for (modules[0..@min(modules.len, diagnose_limit)]) |name| {
         const p = try applyLmod(c, original, lmod, &.{ "--force", "purge" }, raised);
         const purged = p.env orelse {
-            missing.append(c.arena, name) catch {};
+            missing.append(c.arena, name) catch main_mod.oom();
             continue;
         };
         const e = try applyLmod(c, purged, lmod, &.{ "load", eessi }, raised);
         const with_eessi = e.env orelse {
-            missing.append(c.arena, name) catch {};
+            missing.append(c.arena, name) catch main_mod.oom();
             continue;
         };
         const l = try applyLmod(c, with_eessi, lmod, &.{ "load", name }, raised);
-        if (l.env == null) missing.append(c.arena, name) catch {};
+        if (l.env == null) missing.append(c.arena, name) catch main_mod.oom();
     }
     return missing.items;
 }
@@ -713,7 +721,7 @@ fn doRestore(c: *Ctx, payload: json.Value, raised: *[]const u8) HelperError!Repl
             module_bad = true;
             continue;
         }
-        modules.append(a, json.decodeWire(a, m.string) catch return malformed()) catch {};
+        modules.append(a, json.decodeWire(a, m.string) catch return malformed()) catch main_mod.oom();
     }
     var module_env: Map = .empty;
     for (env_v.object) |mem| {
@@ -726,7 +734,7 @@ fn doRestore(c: *Ctx, payload: json.Value, raised: *[]const u8) HelperError!Repl
             .number => |n| n,
             else => return malformed(),
         };
-        module_env.put(a, k, v) catch {};
+        module_env.put(a, k, v) catch main_mod.oom();
     }
     if (!lmodInvocable(lmod)) return .{ .ok = false, .err = "LMOD_CMD is not executable" };
     if (!text.moduleName(eessi) or !text.eessiModule(eessi)) return .{ .ok = false, .err = "unsafe-module-name" };
@@ -742,8 +750,8 @@ fn doRestore(c: *Ctx, payload: json.Value, raised: *[]const u8) HelperError!Repl
     };
     if (modules.items.len > 0) {
         var args: std.ArrayList([]const u8) = .empty;
-        args.append(a, "load") catch {};
-        args.appendSlice(a, modules.items) catch {};
+        args.append(a, "load") catch main_mod.oom();
+        args.appendSlice(a, modules.items) catch main_mod.oom();
         const n = try applyLmod(c, current, lmod, args.items, raised);
         current = n.env orelse {
             const miss = try diagnose(c, module_env, lmod, eessi, modules.items, raised);
@@ -817,7 +825,7 @@ fn side(s: []const u8) []const u8 {
 fn failed(c: *Ctx, was: []const u8, now: []const u8, message: []const u8, detail: ?[]const u8) Outcome {
     var ch: Changes = .empty;
     const token = std.fmt.allocPrint(c.arena, "{s}->{s}", .{ side(was), side(now) }) catch "unrecognized->unrecognized";
-    ch.put(c.arena, "EESSI_ARCH_GUARD_FAILED", token) catch {};
+    ch.put(c.arena, "EESSI_ARCH_GUARD_FAILED", token) catch main_mod.oom();
     return .{
         .changes = ch,
         .message = line1(c, message, 500),
@@ -836,7 +844,7 @@ fn parseLoaded(c: *Ctx, env: Map) Loaded {
     const raw = env.get("LOADEDMODULES") orelse empty;
     var names: std.ArrayList([]const u8) = .empty;
     var it = std.mem.splitScalar(u8, raw, ':');
-    while (it.next()) |p| if (p.len > 0) names.append(c.arena, p) catch {};
+    while (it.next()) |p| if (p.len > 0) names.append(c.arena, p) catch main_mod.oom();
     if (names.items.len == 0) return .{ .err = "LOADEDMODULES is empty" };
     for (names.items) |n| if (!text.moduleName(n)) return .{ .err = "unsafe-module-name" };
     var eessi: ?[]const u8 = null;
@@ -847,7 +855,7 @@ fn parseLoaded(c: *Ctx, env: Map) Loaded {
     };
     if (count != 1 or !text.eessiModule(eessi.?)) return .{ .err = "eessi-module-name" };
     var others: std.ArrayList([]const u8) = .empty;
-    for (names.items) |n| if (!std.mem.eql(u8, n, eessi.?)) others.append(c.arena, n) catch {};
+    for (names.items) |n| if (!std.mem.eql(u8, n, eessi.?)) others.append(c.arena, n) catch main_mod.oom();
     return .{ .eessi = eessi.?, .others = others.items };
 }
 
@@ -856,7 +864,7 @@ fn restoreMismatch(new: Map, now: []const u8, now_accel: []const u8, compare_acc
     if (compare_accel and !std.mem.eql(u8, new.get("EESSI_ACCEL_SUBDIR") orelse empty, now_accel)) return "reload did not select this node's accelerator target";
     var loaded: std.ArrayList([]const u8) = .empty;
     var it = std.mem.splitScalar(u8, new.get("LOADEDMODULES") orelse empty, ':');
-    while (it.next()) |p| if (p.len > 0) loaded.append(c.arena, p) catch {};
+    while (it.next()) |p| if (p.len > 0) loaded.append(c.arena, p) catch main_mod.oom();
     if (!text.inList(loaded.items, eessi)) return "reload did not load the EESSI module";
     for (others) |n| if (!text.inList(loaded.items, n)) return fmt(c, "reload did not load {s}", .{n});
     return "";
@@ -918,7 +926,7 @@ pub fn decide(c: *Ctx, env: Map, shell: bool) Stop!Outcome {
     if (cpu.override.len > 0) {
         module_env = env.clone(c.arena) catch env;
         _ = module_env.orderedRemove("EESSI_ARCHDETECT_OPTIONS");
-        module_env.put(c.arena, "EESSI_SOFTWARE_SUBDIR_OVERRIDE", cpu.override) catch {};
+        module_env.put(c.arena, "EESSI_SOFTWARE_SUBDIR_OVERRIDE", cpu.override) catch main_mod.oom();
     }
     const result = try callRestore(c, module_env, loaded.eessi, loaded.others);
     if (!result.ok or result.env == null) {
@@ -936,9 +944,9 @@ pub fn decide(c: *Ctx, env: Map, shell: bool) Stop!Outcome {
 
     var d = (envmap.delta(c.arena, env, result.env.?, shell) catch null) orelse
         return failed(c, was_label, "unsafe-environment", "eessi-arch-guard: reload produced a value this output mode cannot carry; environment left as it was", null);
-    d.put(c.arena, "EESSI_ARCH_GUARD_RELOADED", fmt(c, "{s}->{s}", .{ side(was_label), side(now_label) })) catch {};
+    d.put(c.arena, "EESSI_ARCH_GUARD_RELOADED", fmt(c, "{s}->{s}", .{ side(was_label), side(now_label) })) catch main_mod.oom();
     if (env.get("EESSI_ARCH_GUARD_FAILED") != null and !d.contains("EESSI_ARCH_GUARD_FAILED"))
-        d.put(c.arena, "EESSI_ARCH_GUARD_FAILED", null) catch {};
+        d.put(c.arena, "EESSI_ARCH_GUARD_FAILED", null) catch main_mod.oom();
     const message = fmt(c, "eessi-arch-guard: reloaded modules for {s} (loaded for {s})", .{ now_label, was_label });
     if (!shell) {
         _ = envmap.render(c.arena, d, message, false, true) catch
